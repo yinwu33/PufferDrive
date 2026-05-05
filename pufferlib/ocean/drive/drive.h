@@ -2150,8 +2150,10 @@ void c_step(Drive *env) {
         // Reward agent if it is within X meters of goal and speed is below threshold
         bool within_distance = distance_to_goal < env->goal_radius;
         bool within_speed = current_speed <= env->goal_speed;
+        bool collision_free_before_goal = !env->entities[agent_idx].collided_before_goal;
 
-        if (within_distance && within_speed && !env->entities[agent_idx].current_goal_reached) {
+        if (within_distance && within_speed && collision_free_before_goal &&
+            !env->entities[agent_idx].current_goal_reached) {
             if (env->goal_behavior == GOAL_RESPAWN && env->entities[agent_idx].respawn_timestep != -1) {
                 env->rewards[i] += env->reward_goal_post_respawn;
                 env->logs[i].episode_return += env->reward_goal_post_respawn;
@@ -2163,8 +2165,8 @@ void c_step(Drive *env) {
                 env->entities[agent_idx].current_goal_reached = 0;
                 env->entities[agent_idx].goals_reached_this_episode += 1.0f;
             } else { // Zero out the velocity so that the agent stops at the goal
-                env->rewards[i] = env->reward_goal;
-                env->logs[i].episode_return = env->reward_goal;
+                env->rewards[i] += env->reward_goal;
+                env->logs[i].episode_return += env->reward_goal;
                 env->entities[agent_idx].stopped = 1;
                 env->entities[agent_idx].vx = env->entities[agent_idx].vy = 0.0f;
                 env->entities[agent_idx].goals_reached_this_episode += 1.0f;

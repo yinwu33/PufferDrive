@@ -658,7 +658,7 @@ def process_all_maps(
     binary_dir.mkdir(parents=True, exist_ok=True)
 
     # Get all JSON files in the training directory
-    json_files = sorted(data_dir.glob("*.json"))
+    json_files = sorted(data_dir.glob("**/*.json"))
 
     # Prepare arguments for parallel processing
     tasks = []

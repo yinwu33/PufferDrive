@@ -84,7 +84,7 @@ int demo(const char *map_name, const char *policy_name, int show_grid, int obs_o
         return -1;
     }
     c_reset(&env);
-    c_render(&env);
+    c_render(&env, VIEW_MODE_SIM_STATE, show_human_logs);
     Weights *weights = load_weights((char *)policy_name);
     DriveNet *net = init_drivenet(weights, env.active_agent_count, env.dynamics_model);
 
@@ -151,7 +151,7 @@ int demo(const char *map_name, const char *policy_name, int show_grid, int obs_o
         }
 
         c_step(&env);
-        c_render(&env);
+        c_render(&env, VIEW_MODE_SIM_STATE, show_human_logs);
     }
 
     close_client(env.client);
