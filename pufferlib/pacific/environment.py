@@ -8,11 +8,19 @@ def lazy_import(module_path, attr):
     import the module, retrieve the attribute (usually a class or factory)
     and then call it with the given arguments.
     """
-    return lambda *args, **kwargs: getattr(__import__(module_path, fromlist=[attr]), attr)(*args, **kwargs)
+    return lambda *args, **kwargs: getattr(
+        __import__(module_path, fromlist=[attr]), attr
+    )(*args, **kwargs)
 
 
 def make_foraging(
-    width=1080, height=720, num_agents=4096, horizon=512, discretize=True, food_reward=0.1, render_mode="rgb_array"
+    width=1080,
+    height=720,
+    num_agents=4096,
+    horizon=512,
+    discretize=True,
+    food_reward=0.1,
+    render_mode="rgb_array",
 ):
     from .grid import grid
 
@@ -32,7 +40,13 @@ def make_foraging(
 
 
 def make_predator_prey(
-    width=1080, height=720, num_agents=4096, horizon=512, discretize=True, food_reward=0.1, render_mode="rgb_array"
+    width=1080,
+    height=720,
+    num_agents=4096,
+    horizon=512,
+    discretize=True,
+    food_reward=0.1,
+    render_mode="rgb_array",
 ):
     from .grid import grid
 
@@ -52,7 +66,13 @@ def make_predator_prey(
 
 
 def make_group(
-    width=1080, height=720, num_agents=4096, horizon=512, discretize=True, food_reward=0.1, render_mode="rgb_array"
+    width=1080,
+    height=720,
+    num_agents=4096,
+    horizon=512,
+    discretize=True,
+    food_reward=0.1,
+    render_mode="rgb_array",
 ):
     from .grid import grid
 
@@ -72,7 +92,13 @@ def make_group(
 
 
 def make_puffer(
-    width=1080, height=720, num_agents=4096, horizon=512, discretize=True, food_reward=0.1, render_mode="rgb_array"
+    width=1080,
+    height=720,
+    num_agents=4096,
+    horizon=512,
+    discretize=True,
+    food_reward=0.1,
+    render_mode="rgb_array",
 ):
     from .grid import grid
 
@@ -92,9 +118,23 @@ def make_puffer(
 
 
 def make_puffergrid(
-    render_mode="raylib", vision_range=5, num_envs=4096, num_maps=1000, max_map_size=9, report_interval=128, buf=None
+    render_mode="raylib",
+    vision_range=5,
+    num_envs=4096,
+    num_maps=1000,
+    max_map_size=9,
+    report_interval=128,
+    buf=None,
 ):
-    return PufferGrid(render_mode, vision_range, num_envs, num_maps, max_map_size, report_interval, buf)
+    return PufferGrid(
+        render_mode,
+        vision_range,
+        num_envs,
+        num_maps,
+        max_map_size,
+        report_interval,
+        buf,
+    )
 
 
 def make_continuous(discretize=False, buf=None, **kwargs):
@@ -110,7 +150,9 @@ def make_continuous(discretize=False, buf=None, **kwargs):
 def make_squared(distance_to_target=3, num_targets=1, buf=None, **kwargs):
     from . import sanity
 
-    env = sanity.Squared(distance_to_target=distance_to_target, num_targets=num_targets, **kwargs)
+    env = sanity.Squared(
+        distance_to_target=distance_to_target, num_targets=num_targets, **kwargs
+    )
     env = pufferlib.EpisodeStats(env)
     return pufferlib.emulation.GymnasiumPufferEnv(env=env, buf=buf, **kwargs)
 
@@ -118,7 +160,9 @@ def make_squared(distance_to_target=3, num_targets=1, buf=None, **kwargs):
 def make_bandit(num_actions=10, reward_scale=1, reward_noise=1, buf=None):
     from . import sanity
 
-    env = sanity.Bandit(num_actions=num_actions, reward_scale=reward_scale, reward_noise=reward_noise)
+    env = sanity.Bandit(
+        num_actions=num_actions, reward_scale=reward_scale, reward_noise=reward_noise
+    )
     env = pufferlib.EpisodeStats(env)
     return pufferlib.emulation.GymnasiumPufferEnv(env=env, buf=buf)
 
@@ -142,7 +186,9 @@ def make_password(password_length=5, buf=None, **kwargs):
 def make_performance(delay_mean=0, delay_std=0, bandwidth=1, buf=None, **kwargs):
     from . import sanity
 
-    env = sanity.Performance(delay_mean=delay_mean, delay_std=delay_std, bandwidth=bandwidth)
+    env = sanity.Performance(
+        delay_mean=delay_mean, delay_std=delay_std, bandwidth=bandwidth
+    )
     env = pufferlib.EpisodeStats(env)
     return pufferlib.emulation.GymnasiumPufferEnv(env=env, buf=buf)
 
@@ -150,7 +196,9 @@ def make_performance(delay_mean=0, delay_std=0, bandwidth=1, buf=None, **kwargs)
 def make_performance_empiric(count_n=0, count_std=0, bandwidth=1, buf=None, **kwargs):
     from . import sanity
 
-    env = sanity.PerformanceEmpiric(count_n=count_n, count_std=count_std, bandwidth=bandwidth)
+    env = sanity.PerformanceEmpiric(
+        count_n=count_n, count_std=count_std, bandwidth=bandwidth
+    )
     env = pufferlib.EpisodeStats(env)
     return pufferlib.emulation.GymnasiumPufferEnv(env=env, buf=buf)
 
@@ -187,13 +235,9 @@ MAKE_FUNCTIONS = {
 
 
 def env_creator(name="squared", *args, **kwargs):
-    if "puffer_" not in name:
-        raise pufferlib.APIUsageError(f"Invalid environment name: {name}")
-
-    # TODO: Robust sanity / ocean imports
-    name = name.replace("puffer_", "")
     try:
-        module = importlib.import_module(f"pufferlib.ocean.{name}.{name}")
-        return getattr(module, MAKE_FUNCTIONS[name])
+        module = importlib.import_module(f"pufferlib.pacific.drive.drive")
+        model_name = MAKE_FUNCTIONS.get(name, "Drive")
+        return getattr(module, model_name)
     except ModuleNotFoundError:
         return MAKE_FUNCTIONS[name]

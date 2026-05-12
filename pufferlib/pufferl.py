@@ -62,8 +62,9 @@ ADVANTAGE_CUDA = shutil.which("nvcc") is not None
 
 
 class PuffeRL:
-    def __init__(self, config, vecenv, policy, logger=None, full_args=None):
+    def __init__(self, config, vecenv, policy, logger=None, full_args=None, env_name=None):
         self.full_args = full_args
+        self.env_name = env_name
         # Backend perf optimization
         torch.set_float32_matmul_precision("high")
         torch.backends.cudnn.deterministic = config["torch_deterministic"]
@@ -522,12 +523,12 @@ class PuffeRL:
 
             self.evaluator = Evaluator(self.full_args, self.logger)
             if human_replay_eval:
-                self.evaluator.hr_env = load_env("puffer_drive", self.evaluator.hr_eval_config)
+                self.evaluator.hr_env = load_env(self.env_name, self.evaluator.hr_eval_config)
                 self.evaluator.rollout(self.uncompiled_policy, mode="human_replay")
                 self.evaluator.hr_env.close()
                 self.evaluator.log_videos(eval_mode="human_replay", epoch=self.epoch)
             if self_play_eval:
-                self.evaluator.sp_env = load_env("puffer_drive", self.evaluator.sp_eval_config)
+                self.evaluator.sp_env = load_env(self.env_name, self.evaluator.sp_eval_config)
                 self.evaluator.rollout(self.uncompiled_policy, mode="self_play")
                 self.evaluator.sp_env.close()
                 self.evaluator.log_videos(eval_mode="self_play", epoch=self.epoch)
@@ -1008,7 +1009,7 @@ def train(env_name, args=None, vecenv=None, policy=None, logger=None):
         logger = WandbLogger(args)
 
     train_config = dict(**args["train"], env=env_name, eval=args.get("eval", {}))
-    pufferl = PuffeRL(train_config, vecenv, policy, logger, full_args=args)
+    pufferl = PuffeRL(train_config, vecenv, policy, logger, full_args=args, env_name=env_name)
 
     all_logs = []
     while pufferl.global_step < train_config["total_timesteps"]:
@@ -1338,7 +1339,7 @@ def export(args=None, env_name=None, vecenv=None, policy=None, path=None, silent
 
 def autotune(args=None, env_name=None, vecenv=None, policy=None):
     package = args["package"]
-    module_name = "pufferlib.ocean" if package == "ocean" else f"pufferlib.environments.{package}"
+    module_name = "pufferlib.ocean" if package == "ocean" else f"pufferlib.{package}"
     env_module = importlib.import_module(module_name)
     env_name = args["env_name"]
     make_env = env_module.env_creator(env_name)
@@ -1347,7 +1348,7 @@ def autotune(args=None, env_name=None, vecenv=None, policy=None):
 
 def load_env(env_name, args):
     package = args["package"]
-    module_name = "pufferlib.ocean" if package == "ocean" else f"pufferlib.environments.{package}"
+    module_name = "pufferlib.ocean" if package == "ocean" else f"pufferlib.{package}"
     env_module = importlib.import_module(module_name)
     make_env = env_module.env_creator(env_name)
     return pufferlib.vector.make(make_env, env_kwargs=args["env"], **args["vec"])
@@ -1355,7 +1356,7 @@ def load_env(env_name, args):
 
 def load_policy(args, vecenv, env_name=""):
     package = args["package"]
-    module_name = "pufferlib.ocean" if package == "ocean" else f"pufferlib.environments.{package}"
+    module_name = "pufferlib.ocean" if package == "ocean" else f"pufferlib.{package}"
     env_module = importlib.import_module(module_name)
 
     device = args["train"]["device"]
