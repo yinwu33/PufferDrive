@@ -634,7 +634,7 @@ def _process_single_map(args):
 
 def process_all_maps(
     data_folder="data/processed/training",
-    max_maps=50_000,
+    max_maps=None,  # ! here to limit map amounts
     num_workers=None,
 ):
     """Process all maps and save them as binaries using multiprocessing
@@ -659,11 +659,14 @@ def process_all_maps(
 
     # Get all JSON files in the training directory
     json_files = sorted(data_dir.glob("*.json"))
+    
+    if max_maps:
+        json_files = json_files[:max_maps]
 
     # Prepare arguments for parallel processing
     tasks = []
-    for i, map_path in enumerate(json_files[:max_maps]):
-        binary_file = f"map_{i:03d}.bin"
+    for i, map_path in enumerate(json_files):
+        binary_file = f"map_{i:03d}.bin"  # no matter the original name, all name to map_XXX.bin
         binary_path = binary_dir / binary_file
         tasks.append((i, map_path, binary_path))
 
@@ -717,7 +720,9 @@ def test_performance(timeout=10, atn_cache=1024, num_agents=1024):
 if __name__ == "__main__":
     # test_performance()
     # Process the train dataset
-    process_all_maps(data_folder="data/processed/training")
+    # process_all_maps(data_folder="data/processed/training")
+    # process_all_maps(data_folder="download/gpudrive/validation")
+    process_all_maps(data_folder="download/gpudrive/testing")
     # Process the validation/test dataset
     # process_all_maps(data_folder="data/processed/validation")
     # # Process the validation_interactive dataset

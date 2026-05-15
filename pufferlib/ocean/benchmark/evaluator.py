@@ -75,6 +75,13 @@ class WOSACEvaluator:
 
                 # Collect simulated trajectories
                 if policy is not None and self.eval_mode == "policy":
+                    # this is a dict
+                    # x: (num_agents, num_rollouts, num_steps)
+                    # y: (num_agents, num_rollouts, num_steps)
+                    # z: (num_agents, num_rollouts, num_steps)
+                    # heading: (num_agents, num_rollouts, num_steps)
+                    # id: (num_agents, num_rollouts, num_steps)
+                    # ? there is a question, when agent reaches target, still keep simulating it
                     simulated_trajectories = self.collect_simulated_trajectories(args, vecenv, policy)
                 elif self.eval_mode == "ground_truth":
                     # Create fake simulated trajectories by repeating ground truth
