@@ -1051,6 +1051,22 @@ def eval(env_name, args=None, vecenv=None, policy=None):
 
     wosac_enabled = args["eval"]["wosac_realism_eval"]
     human_replay_enabled = args["eval"]["human_replay_eval"]
+    deterministic_eval = bool(args["eval"].get("deterministic", False))
+    eval_seed = int(args["eval"].get("seed", args["train"]["seed"]))
+
+    if deterministic_eval:
+        random.seed(eval_seed)
+        np.random.seed(eval_seed)
+        torch.manual_seed(eval_seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(eval_seed)
+        torch.backends.cudnn.benchmark = False
+        torch.backends.cudnn.deterministic = True
+        print(f"Deterministic eval enabled (seed={eval_seed})")
+
+    # Eval modes may use eval-specific map sampling config.
+    if "sample_mode" in args["eval"]:
+        args["env"]["sample_mode"] = args["eval"]["sample_mode"]
 
     if wosac_enabled:
         args["env"]["map_dir"] = args["eval"]["map_dir"]
@@ -1078,6 +1094,11 @@ def eval(env_name, args=None, vecenv=None, policy=None):
         # Create environment and policy
         vecenv = vecenv or load_env(env_name, args)
         policy = policy or load_policy(args, vecenv, env_name)
+
+        if hasattr(vecenv, "driver_env") and getattr(vecenv.driver_env, "map_ids", None):
+            first_map_id = int(vecenv.driver_env.map_ids[0])
+            sample_mode = args["env"].get("sample_mode", "random")
+            print(f"WOSAC map sampling mode={sample_mode}, first_sampled_map_id={first_map_id}")
 
         # Make eval class instance
         evaluator = WOSACEvaluator(args)
@@ -1112,6 +1133,8 @@ def eval(env_name, args=None, vecenv=None, policy=None):
         evaluator.rollout(policy, mode="human_replay")
 
         results_dict = evaluator.human_replay_stats or {}
+        if hasattr(vecenv, "driver_env") and getattr(vecenv.driver_env, "map_ids", None):
+            results_dict["first_sampled_map_id"] = int(vecenv.driver_env.map_ids[0])
         results_dict = {k: v.item() if hasattr(v, "item") else v for k, v in results_dict.items()}
 
         import json
@@ -1133,6 +1156,11 @@ def eval(env_name, args=None, vecenv=None, policy=None):
         # Create environment and policy
         vecenv = vecenv or load_env(env_name, args)
         policy = policy or load_policy(args, vecenv, env_name)
+
+        if hasattr(vecenv, "driver_env") and getattr(vecenv.driver_env, "map_ids", None):
+            first_map_id = int(vecenv.driver_env.map_ids[0])
+            sample_mode = args["env"].get("sample_mode", "random")
+            print(f"Standard eval map sampling mode={sample_mode}, first_sampled_map_id={first_map_id}")
 
         # Reset environment
         ob, info = vecenv.reset()
@@ -1157,7 +1185,10 @@ def eval(env_name, args=None, vecenv=None, policy=None):
             with torch.no_grad():
                 ob = torch.as_tensor(ob).to(device)
                 logits, value = policy.forward_eval(ob, state)
-                action, logprob, _ = pufferlib.pytorch.sample_logits(logits)
+                if deterministic_eval:
+                    action = pufferlib.pytorch.deterministic_action(logits)
+                else:
+                    action, logprob, _ = pufferlib.pytorch.sample_logits(logits)
                 action = action.cpu().numpy().reshape(vecenv.action_space.shape)
 
             if isinstance(logits, torch.distributions.Normal):

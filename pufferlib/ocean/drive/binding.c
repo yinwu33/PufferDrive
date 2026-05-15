@@ -71,6 +71,7 @@ static PyObject *my_shared(PyObject *self, PyObject *args, PyObject *kwargs) {
     char *map_dir = unpack_str(kwargs, "map_dir");
     int num_agents = unpack(kwargs, "num_agents");
     int num_maps = unpack(kwargs, "num_maps");
+    int sample_mode = unpack(kwargs, "sample_mode"); // 0: random, 1: sequential
     int init_mode = unpack(kwargs, "init_mode");
     int control_mode = unpack(kwargs, "control_mode");
     int init_steps = unpack(kwargs, "init_steps");
@@ -78,8 +79,12 @@ static PyObject *my_shared(PyObject *self, PyObject *args, PyObject *kwargs) {
     float goal_target_distance = unpack(kwargs, "goal_target_distance");
     int max_controlled_agents = unpack(kwargs, "max_controlled_agents");
 
-    clock_gettime(CLOCK_REALTIME, &ts);
-    srand(ts.tv_nsec); // Always use random sampling with replacement
+    if (sample_mode == 0) {
+        clock_gettime(CLOCK_REALTIME, &ts);
+        srand(ts.tv_nsec); // Random sampling with replacement
+    }
+
+    static int sequential_cursor = 0;
 
     int total_agent_count = 0;
     int env_count = 0;
@@ -94,8 +99,13 @@ static PyObject *my_shared(PyObject *self, PyObject *args, PyObject *kwargs) {
     while (total_agent_count < num_agents && env_count < max_envs) {
         char map_file[512];
 
-        // Always sample randomly with replacement
-        int map_id = rand() % num_maps;
+        int map_id;
+        if (sample_mode == 1) {
+            map_id = sequential_cursor; // % num_maps;
+            sequential_cursor++;
+        } else {
+            map_id = rand() % num_maps;
+        }
 
         // printf("Sampling map_id: %d\n", map_id);
 

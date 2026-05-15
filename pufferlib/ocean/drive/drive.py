@@ -47,6 +47,7 @@ class Drive(pufferlib.PufferEnv):
         init_steps=0,
         init_mode="create_all_valid",
         control_mode="control_vehicles",
+        sample_mode="random",
         max_controlled_agents=32,
         map_dir="resources/drive/binaries/training",
     ):
@@ -94,6 +95,7 @@ class Drive(pufferlib.PufferEnv):
         self.init_steps = init_steps
         self.init_mode_str = init_mode
         self.control_mode_str = control_mode
+        self.sample_mode_str = sample_mode
         self.map_dir = map_dir
 
         if self.control_mode_str == "control_vehicles":
@@ -110,6 +112,14 @@ class Drive(pufferlib.PufferEnv):
             raise ValueError(
                 f"control_mode must be one of 'control_vehicles', 'control_wosac', 'control_agents' or 'control_mixed_play'. Got: {self.control_mode_str}"
             )
+
+        if self.sample_mode_str == "random":
+            self.sample_mode = 0
+        elif self.sample_mode_str == "sequential":
+            self.sample_mode = 1
+        else:
+            raise ValueError(f"sample_mode must be one of 'random' or 'sequential'. Got: {self.sample_mode_str}")
+
         if self.init_mode_str == "create_all_valid":
             self.init_mode = 0
         elif self.init_mode_str == "create_only_controlled":
@@ -161,6 +171,7 @@ class Drive(pufferlib.PufferEnv):
             init_steps=self.init_steps,
             goal_behavior=self.goal_behavior,
             goal_target_distance=self.goal_target_distance,
+            sample_mode=self.sample_mode,
             max_controlled_agents=self.max_controlled_agents,
         )
 
@@ -229,6 +240,7 @@ class Drive(pufferlib.PufferEnv):
             goal_target_distance=self.goal_target_distance,
             goal_speed=self.goal_speed,
             map_dir=self.map_dir,
+            sample_mode=self.sample_mode,
             max_controlled_agents=self.max_controlled_agents,
         )
         self.agent_offsets = agent_offsets

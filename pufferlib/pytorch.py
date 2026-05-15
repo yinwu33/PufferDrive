@@ -225,3 +225,17 @@ def sample_logits(logits, action=None):
         return action.squeeze(0), logprob.squeeze(0), logits_entropy.squeeze(0)
 
     return action.T, logprob.sum(0), logits_entropy
+
+
+def deterministic_action(logits):
+    """Select deterministic actions from policy outputs for reproducible evaluation."""
+    if isinstance(logits, torch.distributions.Normal):
+        batch = logits.loc.shape[0]
+        return logits.loc.view(batch, -1)
+
+    if isinstance(logits, torch.Tensor):
+        return logits.argmax(dim=-1)
+
+    # Multi-discrete: list/tuple of per-dimension logits tensors with shape [batch, num_actions]
+    actions = [l.argmax(dim=-1) for l in logits]
+    return torch.stack(actions, dim=-1)
