@@ -1100,6 +1100,29 @@ def eval(env_name, args=None, vecenv=None, policy=None):
         vecenv.close()
         return results_dict
 
+    if human_replay_enabled:
+        print("Running human replay evaluation (policy controls SDC only).\n")
+
+        evaluator = Evaluator(args)
+
+        # Use the human replay environment config where only the SDC is controlled by the policy.
+        vecenv = vecenv or load_env(env_name, evaluator.hr_eval_config)
+        policy = policy or load_policy(args, vecenv, env_name)
+        evaluator.hr_env = vecenv
+        evaluator.rollout(policy, mode="human_replay")
+
+        results_dict = evaluator.human_replay_stats or {}
+        results_dict = {k: v.item() if hasattr(v, "item") else v for k, v in results_dict.items()}
+
+        import json
+
+        print("\nHUMAN_REPLAY_METRICS_START")
+        print(json.dumps(results_dict))
+        print("HUMAN_REPLAY_METRICS_END")
+
+        vecenv.close()
+        return results_dict
+
     else:  # Standard evaluation: Render
         backend = args["vec"]["backend"]
         if backend != "PufferEnv":
