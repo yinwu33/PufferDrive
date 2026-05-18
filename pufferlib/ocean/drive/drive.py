@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import numpy as np
 import gymnasium
 import json
@@ -12,7 +14,9 @@ from tqdm import tqdm
 
 class RenderView(IntEnum):
     FULL_SIM_STATE = 0  # Orthographic top-down, fully observable simulator state
-    BEV_AGENT_OBS = 1  # Orthographic top-down, only show what the selected agent can observe
+    BEV_AGENT_OBS = (
+        1  # Orthographic top-down, only show what the selected agent can observe
+    )
     AGENT_PERSP = 2  # Third-person perspective following selected agent
 
 
@@ -74,9 +78,10 @@ class Drive(pufferlib.PufferEnv):
         self.max_controlled_agents = max_controlled_agents
 
         # Observation space calculation
-        self.ego_features = {"classic": binding.EGO_FEATURES_CLASSIC, "jerk": binding.EGO_FEATURES_JERK}.get(
-            dynamics_model
-        )
+        self.ego_features = {
+            "classic": binding.EGO_FEATURES_CLASSIC,
+            "jerk": binding.EGO_FEATURES_JERK,
+        }.get(dynamics_model)
 
         # Extract observation shapes from constants
         # These need to be defined in C, since they determine the shape of the arrays
@@ -90,7 +95,9 @@ class Drive(pufferlib.PufferEnv):
             + self.max_partner_objects * self.partner_features
             + self.max_road_objects * self.road_features
         )
-        self.single_observation_space = gymnasium.spaces.Box(low=-1, high=1, shape=(self.num_obs,), dtype=np.float32)
+        self.single_observation_space = gymnasium.spaces.Box(
+            low=-1, high=1, shape=(self.num_obs,), dtype=np.float32
+        )
 
         self.init_steps = init_steps
         self.init_mode_str = init_mode
@@ -118,7 +125,9 @@ class Drive(pufferlib.PufferEnv):
         elif self.sample_mode_str == "sequential":
             self.sample_mode = 1
         else:
-            raise ValueError(f"sample_mode must be one of 'random' or 'sequential'. Got: {self.sample_mode_str}")
+            raise ValueError(
+                f"sample_mode must be one of 'random' or 'sequential'. Got: {self.sample_mode_str}"
+            )
 
         if self.init_mode_str == "create_all_valid":
             self.init_mode = 0
@@ -139,11 +148,17 @@ class Drive(pufferlib.PufferEnv):
                 # Joint action space (assume dependence) - 4 longitudinal × 3 lateral = 12
                 self.single_action_space = gymnasium.spaces.MultiDiscrete([4 * 3])
             else:
-                raise ValueError(f"dynamics_model must be 'classic' or 'jerk'. Got: {dynamics_model}")
+                raise ValueError(
+                    f"dynamics_model must be 'classic' or 'jerk'. Got: {dynamics_model}"
+                )
         elif action_type == "continuous":
-            self.single_action_space = gymnasium.spaces.Box(low=-1, high=1, shape=(2,), dtype=np.float32)
+            self.single_action_space = gymnasium.spaces.Box(
+                low=-1, high=1, shape=(2,), dtype=np.float32
+            )
         else:
-            raise ValueError(f"action_space must be 'discrete' or 'continuous'. Got: {action_type}")
+            raise ValueError(
+                f"action_space must be 'discrete' or 'continuous'. Got: {action_type}"
+            )
 
         self._action_type_flag = 0 if action_type == "discrete" else 1
 
@@ -155,7 +170,9 @@ class Drive(pufferlib.PufferEnv):
             )
 
         # Check maps availability
-        available_maps = len([name for name in os.listdir(map_dir) if name.endswith(".bin")])
+        available_maps = len(
+            [name for name in os.listdir(map_dir) if name.endswith(".bin")]
+        )
         if num_maps > available_maps:
             raise ValueError(
                 f"num_maps ({num_maps}) exceeds available maps in directory ({available_maps}). Please reduce num_maps or add more maps to resources/drive/binaries."
@@ -204,8 +221,14 @@ class Drive(pufferlib.PufferEnv):
                 collision_behavior=self.collision_behavior,
                 offroad_behavior=self.offroad_behavior,
                 dt=dt,
-                episode_length=(int(episode_length) if episode_length is not None else None),
-                termination_mode=(int(self.termination_mode) if self.termination_mode is not None else 0),
+                episode_length=(
+                    int(episode_length) if episode_length is not None else None
+                ),
+                termination_mode=(
+                    int(self.termination_mode)
+                    if self.termination_mode is not None
+                    else 0
+                ),
                 map_id=map_ids[i],
                 max_agents=nxt - cur,
                 ini_file="pufferlib/config/ocean/drive.ini",
@@ -271,7 +294,11 @@ class Drive(pufferlib.PufferEnv):
                 collision_behavior=self.collision_behavior,
                 offroad_behavior=self.offroad_behavior,
                 dt=self.dt,
-                episode_length=(int(self.episode_length) if self.episode_length is not None else None),
+                episode_length=(
+                    int(self.episode_length)
+                    if self.episode_length is not None
+                    else None
+                ),
                 map_id=map_ids[i],
                 max_agents=nxt - cur,
                 ini_file="pufferlib/config/ocean/drive.ini",
@@ -279,7 +306,11 @@ class Drive(pufferlib.PufferEnv):
                 init_mode=self.init_mode,
                 control_mode=self.control_mode,
                 map_dir=self.map_dir,
-                termination_mode=(int(self.termination_mode) if self.termination_mode is not None else 0),
+                termination_mode=(
+                    int(self.termination_mode)
+                    if self.termination_mode is not None
+                    else 0
+                ),
                 max_controlled_agents=self.max_controlled_agents,
                 render_mode=self.render_mode,
             )
@@ -307,7 +338,11 @@ class Drive(pufferlib.PufferEnv):
                 if log:
                     info.append(log)
 
-        if self.tick > 0 and self.resample_frequency > 0 and self.tick % self.resample_frequency == 0:
+        if (
+            self.tick > 0
+            and self.resample_frequency > 0
+            and self.tick % self.resample_frequency == 0
+        ):
             self.resample_maps()
 
         return (self.observations, self.rewards, self.terminals, self.truncations, info)
@@ -353,11 +388,21 @@ class Drive(pufferlib.PufferEnv):
         num_agents = self.num_agents
 
         trajectories = {
-            "x": np.zeros((num_agents, self.episode_length - self.init_steps), dtype=np.float32),
-            "y": np.zeros((num_agents, self.episode_length - self.init_steps), dtype=np.float32),
-            "z": np.zeros((num_agents, self.episode_length - self.init_steps), dtype=np.float32),
-            "heading": np.zeros((num_agents, self.episode_length - self.init_steps), dtype=np.float32),
-            "valid": np.zeros((num_agents, self.episode_length - self.init_steps), dtype=np.int32),
+            "x": np.zeros(
+                (num_agents, self.episode_length - self.init_steps), dtype=np.float32
+            ),
+            "y": np.zeros(
+                (num_agents, self.episode_length - self.init_steps), dtype=np.float32
+            ),
+            "z": np.zeros(
+                (num_agents, self.episode_length - self.init_steps), dtype=np.float32
+            ),
+            "heading": np.zeros(
+                (num_agents, self.episode_length - self.init_steps), dtype=np.float32
+            ),
+            "valid": np.zeros(
+                (num_agents, self.episode_length - self.init_steps), dtype=np.int32
+            ),
             "id": np.zeros(num_agents, dtype=np.int32),
             "is_vehicle": np.zeros(num_agents, dtype=bool),
             "is_track_to_predict": np.zeros(num_agents, dtype=bool),
@@ -412,7 +457,12 @@ class Drive(pufferlib.PufferEnv):
 
         return polylines
 
-    def render(self, view_mode: RenderView = RenderView.FULL_SIM_STATE, draw_traces: bool = True, env_id: int = 0):
+    def render(
+        self,
+        view_mode: RenderView = RenderView.FULL_SIM_STATE,
+        draw_traces: bool = True,
+        env_id: int = 0,
+    ):
         binding.vec_render(self.c_envs, int(view_mode), draw_traces, env_id)
 
     def close(self):
@@ -435,7 +485,10 @@ class Drive(pufferlib.PufferEnv):
 
 def calculate_area(p1, p2, p3):
     # Calculate the area of the triangle using the determinant method
-    return 0.5 * abs((p1["x"] - p3["x"]) * (p2["y"] - p1["y"]) - (p1["x"] - p2["x"]) * (p3["y"] - p1["y"]))
+    return 0.5 * abs(
+        (p1["x"] - p3["x"]) * (p2["y"] - p1["y"])
+        - (p1["x"] - p2["x"]) * (p3["y"] - p1["y"])
+    )
 
 
 def dist(a, b):
@@ -473,7 +526,10 @@ def simplify_polyline(geometry, polyline_reduction_threshold, max_segment_length
             point2 = geometry[k_1]
             point3 = geometry[k_2]
             area = calculate_area(point1, point2, point3)
-            if area < polyline_reduction_threshold and dist(point1, point3) <= max_segment_length:
+            if (
+                area < polyline_reduction_threshold
+                and dist(point1, point3) <= max_segment_length
+            ):
                 skip[k_1] = True
                 skip_changed = True
                 k = k_2
@@ -489,7 +545,9 @@ def save_map_binary(map_data, output_file, unique_map_id):
     with open(output_file, "wb") as f:
         # Get metadata
         metadata = map_data.get("metadata", {})
-        sdc_track_index = metadata.get("sdc_track_index", -1)  # -1 as default if not found
+        sdc_track_index = metadata.get(
+            "sdc_track_index", -1
+        )  # -1 as default if not found
         tracks_to_predict = metadata.get("tracks_to_predict", [])
 
         # Write original scenario_id with fallback to placeholder
@@ -531,13 +589,25 @@ def save_map_binary(map_data, output_file, unique_map_id):
             # Write position arrays
             positions = obj.get("position", [])
             for i in range(trajectory_length):
-                pos = positions[i] if i < len(positions) else {"x": 0.0, "y": 0.0, "z": 0.0}
+                pos = (
+                    positions[i]
+                    if i < len(positions)
+                    else {"x": 0.0, "y": 0.0, "z": 0.0}
+                )
                 f.write(struct.pack("f", float(pos.get("x", 0.0))))
             for i in range(trajectory_length):
-                pos = positions[i] if i < len(positions) else {"x": 0.0, "y": 0.0, "z": 0.0}
+                pos = (
+                    positions[i]
+                    if i < len(positions)
+                    else {"x": 0.0, "y": 0.0, "z": 0.0}
+                )
                 f.write(struct.pack("f", float(pos.get("y", 0.0))))
             for i in range(trajectory_length):
-                pos = positions[i] if i < len(positions) else {"x": 0.0, "y": 0.0, "z": 0.0}
+                pos = (
+                    positions[i]
+                    if i < len(positions)
+                    else {"x": 0.0, "y": 0.0, "z": 0.0}
+                )
                 f.write(struct.pack("f", float(pos.get("z", 0.0))))
 
             # Write velocity arrays
@@ -552,7 +622,10 @@ def save_map_binary(map_data, output_file, unique_map_id):
             f.write(
                 struct.pack(
                     f"{trajectory_length}f",
-                    *[float(headings[i]) if i < len(headings) else 0.0 for i in range(trajectory_length)],
+                    *[
+                        float(headings[i]) if i < len(headings) else 0.0
+                        for i in range(trajectory_length)
+                    ],
                 )
             )
 
@@ -560,7 +633,10 @@ def save_map_binary(map_data, output_file, unique_map_id):
             f.write(
                 struct.pack(
                     f"{trajectory_length}i",
-                    *[int(valids[i]) if i < len(valids) else 0 for i in range(trajectory_length)],
+                    *[
+                        int(valids[i]) if i < len(valids) else 0
+                        for i in range(trajectory_length)
+                    ],
                 )
             )
 
@@ -568,7 +644,9 @@ def save_map_binary(map_data, output_file, unique_map_id):
             f.write(struct.pack("f", float(obj.get("width", 0.0))))
             f.write(struct.pack("f", float(obj.get("length", 0.0))))
             f.write(struct.pack("f", float(obj.get("height", 0.0))))
-            goal_pos = obj.get("goalPosition", {"x": 0, "y": 0, "z": 0})  # Get goalPosition object with default
+            goal_pos = obj.get(
+                "goalPosition", {"x": 0, "y": 0, "z": 0}
+            )  # Get goalPosition object with default
             f.write(struct.pack("f", float(goal_pos.get("x", 0.0))))  # Get x value
             f.write(struct.pack("f", float(goal_pos.get("y", 0.0))))  # Get y value
             f.write(struct.pack("f", float(goal_pos.get("z", 0.0))))  # Get z value
@@ -618,7 +696,9 @@ def save_map_binary(map_data, output_file, unique_map_id):
             f.write(struct.pack("f", float(road.get("width", 0.0))))
             f.write(struct.pack("f", float(road.get("length", 0.0))))
             f.write(struct.pack("f", float(road.get("height", 0.0))))
-            goal_pos = road.get("goalPosition", {"x": 0, "y": 0, "z": 0})  # Get goalPosition object with default
+            goal_pos = road.get(
+                "goalPosition", {"x": 0, "y": 0, "z": 0}
+            )  # Get goalPosition object with default
             f.write(struct.pack("f", float(goal_pos.get("x", 0.0))))  # Get x value
             f.write(struct.pack("f", float(goal_pos.get("y", 0.0))))  # Get y value
             f.write(struct.pack("f", float(goal_pos.get("z", 0.0))))  # Get z value
@@ -648,6 +728,7 @@ def process_all_maps(
     data_folder="data/processed/training",
     max_maps=None,  # ! here to limit map amounts
     num_workers=None,
+    binary_root="resources/drive/binaries",
 ):
     """Process all maps and save them as binaries using multiprocessing
 
@@ -655,6 +736,7 @@ def process_all_maps(
         data_folder: Path to the folder containing JSON map files
         max_maps: Maximum number of maps to process
         num_workers: Number of parallel workers (defaults to cpu_count())
+        binary_root: Root directory to save binary map files
     """
     from pathlib import Path
 
@@ -666,26 +748,33 @@ def process_all_maps(
     dataset_name = data_dir.name
 
     # Create the binaries directory if it doesn't exist
-    binary_dir = Path(f"resources/drive/binaries/{dataset_name}")
+    binary_dir = Path(f"{binary_root}/{dataset_name}")
     binary_dir.mkdir(parents=True, exist_ok=True)
 
     # Get all JSON files in the training directory
     json_files = sorted(data_dir.glob("*.json"))
-    
+
     if max_maps:
         json_files = json_files[:max_maps]
 
     # Prepare arguments for parallel processing
     tasks = []
     for i, map_path in enumerate(json_files):
-        binary_file = f"map_{i:03d}.bin"  # no matter the original name, all name to map_XXX.bin
+        binary_file = (
+            f"map_{i:03d}.bin"  # no matter the original name, all name to map_XXX.bin
+        )
         binary_path = binary_dir / binary_file
         tasks.append((i, map_path, binary_path))
 
     # Process maps in parallel with progress bar
     with Pool(num_workers) as pool:
         results = list(
-            tqdm(pool.imap(_process_single_map, tasks), total=len(tasks), desc="Processing maps", unit="map")
+            tqdm(
+                pool.imap(_process_single_map, tasks),
+                total=len(tasks),
+                desc="Processing maps",
+                unit="map",
+            )
         )
 
     # Collect statistics
@@ -715,7 +804,11 @@ def test_performance(timeout=10, atn_cache=1024, num_agents=1024):
 
     tick = 0
     actions = np.stack(
-        [np.random.randint(0, space.n + 1, (atn_cache, num_agents)) for space in env.single_action_space], axis=-1
+        [
+            np.random.randint(0, space.n + 1, (atn_cache, num_agents))
+            for space in env.single_action_space
+        ],
+        axis=-1,
     )
 
     start = time.time()
@@ -730,11 +823,26 @@ def test_performance(timeout=10, atn_cache=1024, num_agents=1024):
 
 
 if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Process Drive maps and optionally test performance."
+    )
+    parser.add_argument(
+        "json_dir",
+        type=str,
+        help="Directory containing JSON map files to process.",
+        default="data/processed/training",
+    )
+
+    args = parser.parse_args()
+
+    process_all_maps(data_folder=args.json_dir)
     # test_performance()
     # Process the train dataset
     # process_all_maps(data_folder="data/processed/training")
     # process_all_maps(data_folder="download/gpudrive/validation")
-    process_all_maps(data_folder="download/gpudrive/testing")
+    # process_all_maps(data_folder="download/gpudrive/testing")
     # Process the validation/test dataset
     # process_all_maps(data_folder="data/processed/validation")
     # # Process the validation_interactive dataset

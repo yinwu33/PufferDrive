@@ -1067,6 +1067,8 @@ def eval(env_name, args=None, vecenv=None, policy=None):
     # Eval modes may use eval-specific map sampling config.
     if "sample_mode" in args["eval"]:
         args["env"]["sample_mode"] = args["eval"]["sample_mode"]
+    if "map_dir" in args["eval"]:
+        args["env"]["map_dir"] = args["eval"]["map_dir"]
 
     if wosac_enabled:
         args["env"]["map_dir"] = args["eval"]["map_dir"]

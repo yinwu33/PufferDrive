@@ -1,18 +1,34 @@
 import sys
 import os
 import json
+import math
+import collections
 import numpy as np
 import random
-from lxml import etree
-import pyxodr
-from pyxodr.road_objects.road import Road
-from pyxodr.road_objects.lane import Lane, ConnectionPosition, LaneOrientation, TrafficOrientation
-from pyxodr.road_objects.junction import Junction
-from pyxodr.road_objects.lane_section import LaneSection
-from pyxodr.road_objects.network import RoadNetwork
-from shapely.geometry import Polygon
 from enum import IntEnum
 import argparse
+
+try:
+    from lxml import etree
+    import pyxodr
+    from pyxodr.road_objects.road import Road
+    from pyxodr.road_objects.lane import Lane, ConnectionPosition, LaneOrientation, TrafficOrientation
+    from pyxodr.road_objects.junction import Junction
+    from pyxodr.road_objects.lane_section import LaneSection
+    from pyxodr.road_objects.network import RoadNetwork
+    from shapely.geometry import Polygon
+except ModuleNotFoundError:
+    etree = None
+    pyxodr = None
+    Road = None
+    Lane = None
+    ConnectionPosition = None
+    LaneOrientation = None
+    TrafficOrientation = None
+    Junction = None
+    LaneSection = None
+    RoadNetwork = None
+    Polygon = None
 
 
 class MapType(IntEnum):
@@ -812,6 +828,232 @@ def save_object_to_json(
     objects.append(object_data)
     xodr_json["objects"] = objects
     return id + 1
+
+
+def drive_position_xy(position):
+    if isinstance(position, dict):
+        return float(position.get("x", 0.0)), float(position.get("y", 0.0))
+    return float(position[0]), float(position[1])
+
+
+def derive_drive_heading_from_positions(positions, idx, min_distance=1e-3):
+    if idx >= len(positions):
+        return None
+
+    x, y = drive_position_xy(positions[idx])
+    for next_idx in range(idx + 1, len(positions)):
+        next_x, next_y = drive_position_xy(positions[next_idx])
+        dx = next_x - x
+        dy = next_y - y
+        if math.hypot(dx, dy) >= min_distance:
+            return math.atan2(dy, dx)
+
+    for prev_idx in range(idx - 1, -1, -1):
+        prev_x, prev_y = drive_position_xy(positions[prev_idx])
+        dx = x - prev_x
+        dy = y - prev_y
+        if math.hypot(dx, dy) >= min_distance:
+            return math.atan2(dy, dx)
+
+    return None
+
+
+def drive_point_distance(a, b):
+    return math.hypot(float(a["x"]) - float(b["x"]), float(a["y"]) - float(b["y"]))
+
+
+def carla_waypoint_position(waypoint, z_offset=0.0):
+    location = waypoint.transform.location
+    return {"x": float(location.x), "y": float(location.y), "z": float(location.z + z_offset)}
+
+
+def carla_waypoint_heading(waypoint):
+    return math.radians(float(waypoint.transform.rotation.yaw))
+
+
+def clean_drive_polyline(points, min_distance=1e-3):
+    cleaned = []
+    for point in points:
+        if not cleaned or drive_point_distance(cleaned[-1], point) >= min_distance:
+            cleaned.append(point)
+    return cleaned
+
+
+def build_drive_roads_from_carla_map(carla_map, spacing):
+    grouped = collections.defaultdict(list)
+    for waypoint in carla_map.generate_waypoints(spacing):
+        if waypoint.lane_type != waypoint.lane_type.Driving:
+            continue
+        grouped[(waypoint.road_id, waypoint.section_id, waypoint.lane_id)].append(waypoint)
+
+    roads = []
+    for road_id, key in enumerate(sorted(grouped)):
+        waypoints = sorted(grouped[key], key=lambda waypoint: waypoint.s)
+        geometry = clean_drive_polyline([carla_waypoint_position(waypoint) for waypoint in waypoints])
+        if len(geometry) < 2:
+            continue
+        roads.append({"geometry": geometry, "type": "lane", "map_element_id": 2, "id": road_id})
+    if not roads:
+        raise RuntimeError("XODR parsing produced no driving lane geometry")
+    return roads
+
+
+def pick_next_carla_waypoint(current, step_distance, rng):
+    candidates = current.next(step_distance)
+    if not candidates:
+        return current
+    return rng.choice(candidates)
+
+
+def build_drive_agent_trajectory_from_carla_waypoint(
+    start_waypoint,
+    rng,
+    dt=0.1,
+    num_steps=90,
+    waypoint_spacing=0.5,
+    agent_speed=2.0,
+    z_offset=0.9,
+):
+    step_distance = max(agent_speed * dt, waypoint_spacing)
+    waypoints = [start_waypoint]
+    current = start_waypoint
+    for _ in range(num_steps):
+        current = pick_next_carla_waypoint(current, step_distance, rng)
+        waypoints.append(current)
+
+    positions = [carla_waypoint_position(waypoint, z_offset) for waypoint in waypoints]
+    headings = []
+    for idx in range(len(positions)):
+        heading = derive_drive_heading_from_positions(positions, idx)
+        headings.append(float(heading if heading is not None else carla_waypoint_heading(waypoints[idx])))
+
+    velocities = []
+    for idx, position in enumerate(positions):
+        if idx + 1 < len(positions):
+            next_position = positions[idx + 1]
+            vx = (next_position["x"] - position["x"]) / dt
+            vy = (next_position["y"] - position["y"]) / dt
+        elif idx > 0:
+            prev_position = positions[idx - 1]
+            vx = (position["x"] - prev_position["x"]) / dt
+            vy = (position["y"] - prev_position["y"]) / dt
+        else:
+            vx = 0.0
+            vy = 0.0
+        velocities.append({"x": float(vx), "y": float(vy), "z": 0.0})
+
+    return positions, headings, velocities
+
+
+def build_drive_objects_from_carla_map(
+    carla_map,
+    num_objects=32,
+    seed=1,
+    dt=0.1,
+    spawn_spacing=2.0,
+    waypoint_spacing=0.5,
+    agent_speed=2.0,
+    min_start_distance=8.0,
+    min_goal_distance=2.0,
+    agent_length=4.5,
+    agent_width=2.0,
+    agent_height=1.8,
+    agent_z_offset=0.9,
+):
+    rng = random.Random(seed)
+    candidates = [
+        waypoint for waypoint in carla_map.generate_waypoints(spawn_spacing) if waypoint.lane_type == waypoint.lane_type.Driving
+    ]
+    if not candidates:
+        raise RuntimeError("XODR parsing produced no driving lane spawn candidates")
+    rng.shuffle(candidates)
+
+    objects = []
+    start_positions = []
+    min_start_distance = max(min_start_distance, agent_length)
+    for waypoint in candidates:
+        start_position = carla_waypoint_position(waypoint, agent_z_offset)
+        if any(drive_point_distance(start_position, existing) < min_start_distance for existing in start_positions):
+            continue
+
+        positions, headings, velocities = build_drive_agent_trajectory_from_carla_waypoint(
+            waypoint,
+            rng,
+            dt=dt,
+            waypoint_spacing=waypoint_spacing,
+            agent_speed=agent_speed,
+            z_offset=agent_z_offset,
+        )
+        if drive_point_distance(positions[0], positions[-1]) < min_goal_distance:
+            continue
+
+        objects.append(
+            {
+                "position": positions,
+                "width": agent_width,
+                "length": agent_length,
+                "height": agent_height,
+                "id": len(objects) + 1,
+                "heading": headings,
+                "velocity": velocities,
+                "valid": [True] * len(positions),
+                "goalPosition": positions[-1],
+                "type": "vehicle",
+                "mark_as_expert": False,
+            }
+        )
+        start_positions.append(start_position)
+        if len(objects) >= num_objects:
+            break
+
+    if len(objects) != num_objects:
+        raise RuntimeError(f"Generated {len(objects)}/{num_objects} agents from XODR")
+    return objects
+
+
+def generate_drive_json_from_xodr(
+    xodr_path,
+    town_name,
+    num_objects=32,
+    seed=1,
+    dt=0.1,
+    road_spacing=2.0,
+    spawn_spacing=2.0,
+    waypoint_spacing=0.5,
+    agent_speed=2.0,
+    min_start_distance=8.0,
+    min_goal_distance=2.0,
+    agent_length=4.5,
+    agent_width=2.0,
+    agent_height=1.8,
+    agent_z_offset=0.9,
+):
+    import carla
+
+    with open(xodr_path, "r") as f:
+        xodr_text = f.read()
+    carla_map = carla.Map(town_name, xodr_text)
+    return {
+        "scenario_id": town_name,
+        "objects": build_drive_objects_from_carla_map(
+            carla_map,
+            num_objects=num_objects,
+            seed=seed,
+            dt=dt,
+            spawn_spacing=spawn_spacing,
+            waypoint_spacing=waypoint_spacing,
+            agent_speed=agent_speed,
+            min_start_distance=min_start_distance,
+            min_goal_distance=min_goal_distance,
+            agent_length=agent_length,
+            agent_width=agent_width,
+            agent_height=agent_height,
+            agent_z_offset=agent_z_offset,
+        ),
+        "roads": build_drive_roads_from_carla_map(carla_map, road_spacing),
+        "tl_states": {},
+        "metadata": {},
+    }
 
 
 def generate_data_each_map(
