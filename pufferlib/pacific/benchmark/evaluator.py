@@ -12,8 +12,8 @@ import os
 import pufferlib
 
 # WOSAC eval
-from pufferlib.ocean.benchmark import metrics
-from pufferlib.ocean.benchmark import estimators
+from pufferlib.pacific.benchmark import metrics
+from pufferlib.pacific.benchmark import estimators
 
 
 _METRIC_FIELD_NAMES = [
@@ -175,6 +175,7 @@ class WOSACEvaluator:
         driver = puffer_env.driver_env
         num_agents = puffer_env.observation_space.shape[0]
         device = args["train"]["device"]
+        deterministic_eval = bool(args["eval"]["deterministic"])
 
         trajectories = {
             "x": np.zeros((num_agents, self.num_rollouts, self.sim_steps), dtype=np.float32),
@@ -207,7 +208,10 @@ class WOSACEvaluator:
                 with torch.no_grad():
                     ob_tensor = torch.as_tensor(obs).to(device)
                     logits, value = policy.forward_eval(ob_tensor, state)
-                    action, logprob, _ = pufferlib.pytorch.sample_logits(logits)
+                    if deterministic_eval:
+                        action = pufferlib.pytorch.deterministic_action(logits)
+                    else:
+                        action, logprob, _ = pufferlib.pytorch.sample_logits(logits)
                     action_np = action.cpu().numpy().reshape(puffer_env.action_space.shape)
 
                 if isinstance(logits, torch.distributions.Normal):
@@ -794,6 +798,7 @@ class Evaluator:
         backend = eval_config["eval"].get("backend", "PufferEnv")
         eval_config["env"]["map_dir"] = eval_config["eval"]["map_dir"]
         eval_config["env"]["num_agents"] = eval_config["eval"]["num_eval_agents"]
+        eval_config["env"]["sample_mode"] = eval_config["eval"]["sample_mode"]
         eval_config["env"]["episode_length"] = 91  # WOMD scenario length
         eval_config["vec"] = dict(backend=backend, num_envs=1)
 
@@ -862,6 +867,7 @@ class Evaluator:
         driver = env.driver_env
         num_agents = env.observation_space.shape[0]
         device = self.configs["train"]["device"]
+        deterministic_eval = bool(self.configs["eval"]["deterministic"])
 
         # Reset environment
         obs, info = env.reset()
@@ -883,7 +889,10 @@ class Evaluator:
             with torch.no_grad():
                 ob_tensor = torch.as_tensor(obs).to(device)
                 logits, value = policy.forward_eval(ob_tensor, state)
-                action, logprob, _ = pufferlib.pytorch.sample_logits(logits)
+                if deterministic_eval:
+                    action = pufferlib.pytorch.deterministic_action(logits)
+                else:
+                    action, logprob, _ = pufferlib.pytorch.sample_logits(logits)
                 action_np = action.cpu().numpy().reshape(env.action_space.shape)
 
             # Clip continuous actions to valid range

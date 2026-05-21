@@ -2,7 +2,7 @@ import sys
 import pickle
 import numpy as np
 import pufferlib.pufferl as pufferl
-from pufferlib.ocean.benchmark.evaluator import WOSACEvaluator
+from pufferlib.pacific.benchmark.evaluator import WOSACEvaluator
 
 
 def align_trajectories(simulated, ground_truth):
@@ -51,7 +51,7 @@ def evaluate_trajectories(simulated_trajectory_file, args):
     """
     Evaluates pre-computed simulated trajectories against live ground truth from the environment.
     """
-    env_name = "puffer_drive"
+    env_name = "bad_driver"
     args["env"]["map_dir"] = args["eval"]["map_dir"]
     args["env"]["num_maps"] = args["eval"]["wosac_num_maps"]
     dataset_name = args["env"]["map_dir"].split("/")[-1]
@@ -138,6 +138,6 @@ if __name__ == "__main__":
         print("ERROR: --simulated-file argument is required.")
         sys.exit(1)
 
-    config = pufferl.load_config("puffer_drive")
+    config = pufferl.load_config("bad_driver")
 
     evaluate_trajectories(simulated_file, args=config)

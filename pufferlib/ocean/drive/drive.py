@@ -583,6 +583,8 @@ def save_map_binary(map_data, output_file, unique_map_id):
                 obj_type = 2
             elif obj_type == "cyclist":
                 obj_type = 3
+            else:
+                obj_type = 3  # Default to 3 for unknown types
             f.write(struct.pack("i", obj_type))  # type
             f.write(struct.pack("i", obj.get("id", 0)))  # id
             f.write(struct.pack("i", trajectory_length))  # array_size

@@ -5,7 +5,7 @@ import struct
 import os
 import pufferlib
 from enum import IntEnum
-from pufferlib.ocean.drive import binding
+from pufferlib.pacific.drive import binding
 from multiprocessing import Pool, cpu_count
 from tqdm import tqdm
 
@@ -47,6 +47,7 @@ class Drive(pufferlib.PufferEnv):
         init_steps=0,
         init_mode="create_all_valid",
         control_mode="control_vehicles",
+        sample_mode="random",
         max_controlled_agents=32,
         map_dir="resources/drive/binaries/training",
     ):
@@ -94,6 +95,7 @@ class Drive(pufferlib.PufferEnv):
         self.init_steps = init_steps
         self.init_mode_str = init_mode
         self.control_mode_str = control_mode
+        self.sample_mode_str = sample_mode
         self.map_dir = map_dir
 
         if self.control_mode_str == "control_vehicles":
@@ -110,6 +112,14 @@ class Drive(pufferlib.PufferEnv):
             raise ValueError(
                 f"control_mode must be one of 'control_vehicles', 'control_wosac', 'control_agents' or 'control_mixed_play'. Got: {self.control_mode_str}"
             )
+
+        if self.sample_mode_str == "random":
+            self.sample_mode = 0
+        elif self.sample_mode_str == "sequential":
+            self.sample_mode = 1
+        else:
+            raise ValueError(f"sample_mode must be one of 'random' or 'sequential'. Got: {self.sample_mode_str}")
+
         if self.init_mode_str == "create_all_valid":
             self.init_mode = 0
         elif self.init_mode_str == "create_only_controlled":
@@ -161,6 +171,7 @@ class Drive(pufferlib.PufferEnv):
             init_steps=self.init_steps,
             goal_behavior=self.goal_behavior,
             goal_target_distance=self.goal_target_distance,
+            sample_mode=self.sample_mode,
             max_controlled_agents=self.max_controlled_agents,
         )
 
@@ -197,7 +208,7 @@ class Drive(pufferlib.PufferEnv):
                 termination_mode=(int(self.termination_mode) if self.termination_mode is not None else 0),
                 map_id=map_ids[i],
                 max_agents=nxt - cur,
-                ini_file="pufferlib/config/ocean/drive.ini",
+                ini_file="pufferlib/config/pacific/bad_driver.ini",
                 init_steps=init_steps,
                 init_mode=self.init_mode,
                 control_mode=self.control_mode,
@@ -229,6 +240,7 @@ class Drive(pufferlib.PufferEnv):
             goal_target_distance=self.goal_target_distance,
             goal_speed=self.goal_speed,
             map_dir=self.map_dir,
+            sample_mode=self.sample_mode,
             max_controlled_agents=self.max_controlled_agents,
         )
         self.agent_offsets = agent_offsets
@@ -262,7 +274,7 @@ class Drive(pufferlib.PufferEnv):
                 episode_length=(int(self.episode_length) if self.episode_length is not None else None),
                 map_id=map_ids[i],
                 max_agents=nxt - cur,
-                ini_file="pufferlib/config/ocean/drive.ini",
+                ini_file="pufferlib/config/pacific/bad_driver.ini",
                 init_steps=self.init_steps,
                 init_mode=self.init_mode,
                 control_mode=self.control_mode,
@@ -513,6 +525,8 @@ def save_map_binary(map_data, output_file, unique_map_id):
                 obj_type = 2
             elif obj_type == "cyclist":
                 obj_type = 3
+            else:
+                obj_type = 3  # Default to 3 for unknown types
             f.write(struct.pack("i", obj_type))  # type
             f.write(struct.pack("i", obj.get("id", 0)))  # id
             f.write(struct.pack("i", trajectory_length))  # array_size
@@ -634,8 +648,9 @@ def _process_single_map(args):
 
 def process_all_maps(
     data_folder="data/processed/training",
-    max_maps=50_000,
+    max_maps=None,  # ! here to limit map amounts
     num_workers=None,
+    binary_root="resources/drive/binaries",
 ):
     """Process all maps and save them as binaries using multiprocessing
 
@@ -643,6 +658,7 @@ def process_all_maps(
         data_folder: Path to the folder containing JSON map files
         max_maps: Maximum number of maps to process
         num_workers: Number of parallel workers (defaults to cpu_count())
+        binary_root: Root directory to save binary map files
     """
     from pathlib import Path
 
@@ -654,16 +670,19 @@ def process_all_maps(
     dataset_name = data_dir.name
 
     # Create the binaries directory if it doesn't exist
-    binary_dir = Path(f"resources/drive/binaries/{dataset_name}")
+    binary_dir = Path(f"{binary_root}/{dataset_name}")
     binary_dir.mkdir(parents=True, exist_ok=True)
 
     # Get all JSON files in the training directory
     json_files = sorted(data_dir.glob("*.json"))
 
+    if max_maps:
+        json_files = json_files[:max_maps]
+
     # Prepare arguments for parallel processing
     tasks = []
-    for i, map_path in enumerate(json_files[:max_maps]):
-        binary_file = f"map_{i:03d}.bin"
+    for i, map_path in enumerate(json_files):
+        binary_file = f"map_{i:03d}.bin"  # no matter the original name, all name to map_XXX.bin
         binary_path = binary_dir / binary_file
         tasks.append((i, map_path, binary_path))
 
@@ -715,9 +734,24 @@ def test_performance(timeout=10, atn_cache=1024, num_agents=1024):
 
 
 if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Process Drive maps and optionally test performance.")
+    parser.add_argument(
+        "json_dir",
+        type=str,
+        help="Directory containing JSON map files to process.",
+        default="data/processed/training",
+    )
+
+    args = parser.parse_args()
+
+    process_all_maps(data_folder=args.json_dir)
     # test_performance()
     # Process the train dataset
-    process_all_maps(data_folder="data/processed/training")
+    # process_all_maps(data_folder="data/processed/training")
+    # process_all_maps(data_folder="download/gpudrive/validation")
+    # process_all_maps(data_folder="download/gpudrive/testing")
     # Process the validation/test dataset
     # process_all_maps(data_folder="data/processed/validation")
     # # Process the validation_interactive dataset

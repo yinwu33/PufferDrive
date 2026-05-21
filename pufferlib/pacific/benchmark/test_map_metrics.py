@@ -7,7 +7,7 @@ from matplotlib.patches import Rectangle
 from matplotlib.transforms import Affine2D
 import torch
 
-from pufferlib.ocean.benchmark import map_metric_features
+from pufferlib.pacific.benchmark import map_metric_features
 
 
 def _tensor(data, dtype=torch.float32):

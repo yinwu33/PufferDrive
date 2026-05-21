@@ -629,8 +629,8 @@ void init_grid_map(Drive *env) {
     // Calculate grid dimensions
     float grid_width = bottom_right_x - top_left_x;
     float grid_height = top_left_y - bottom_right_y;
-    env->grid_map->grid_cols = ceil(grid_width / GRID_CELL_SIZE);
-    env->grid_map->grid_rows = ceil(grid_height / GRID_CELL_SIZE);
+    env->grid_map->grid_cols = ceil(grid_width / GRID_CELL_SIZE) + 1;
+    env->grid_map->grid_rows = ceil(grid_height / GRID_CELL_SIZE) + 1;
     int grid_cell_count = env->grid_map->grid_cols * env->grid_map->grid_rows;
     env->grid_map->cells = (GridMapEntity **)calloc(grid_cell_count, sizeof(GridMapEntity *));
     env->grid_map->cell_entities_count = (int *)calloc(grid_cell_count, sizeof(int));
@@ -642,6 +642,9 @@ void init_grid_map(Drive *env) {
                 float x_center = (env->entities[i].traj_x[j] + env->entities[i].traj_x[j + 1]) / 2;
                 float y_center = (env->entities[i].traj_y[j] + env->entities[i].traj_y[j + 1]) / 2;
                 int grid_index = getGridIndex(env, x_center, y_center);
+                if (grid_index == -1) {
+                    continue;
+                }
                 env->grid_map->cell_entities_count[grid_index]++;
             }
         }

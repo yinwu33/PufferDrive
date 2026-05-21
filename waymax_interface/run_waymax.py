@@ -9,7 +9,12 @@ import math
 import os
 from pathlib import Path
 import subprocess
+import sys
 from typing import Any
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib")
 os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
@@ -38,9 +43,15 @@ from waymax_interface.tfrecord_preprocess import (
     preprocess_scenario_to_tfexample,
     preprocess_serialized_scenario_to_tfexample,
 )
+from waymax_interface.json_preprocess import preprocess_json_to_tfexample
+
+# TODO:
+from waymax_interface.viz_pufferdrive import VizPufferDrive
+
+
+viz_model_tool  = VizPufferDrive()
 
 DATAROOT_DIR = Path("/mnt/disk/data/public/waymo/motion_v_1_3_1/scenario")
-REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CACHE_PATH = REPO_ROOT / "waymax_interface" / "cache"
 DEFAULT_TFEXAMPLE_CACHE_DIR = DEFAULT_CACHE_PATH / "tfexample"
 DEFAULT_VIDEO_CACHE_DIR = DEFAULT_CACHE_PATH / "video"
@@ -143,6 +154,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--synthetic",
         action="store_true",
         help="Run Waymax on a generated zero scenario instead of a TFRecord.",
+    )
+    parser.add_argument(
+        "--json",
+        type=Path,
+        default=None,
+        help="Run Waymax on a ScenarioMax/PufferDrive JSON scenario.",
     )
     parser.add_argument(
         "-f",
@@ -249,6 +266,11 @@ def cached_video_path(split: str, file_index: int, scenario_index: int) -> Path:
     return DEFAULT_VIDEO_CACHE_DIR / f"{split}_{file_index}_{scenario_index}.mp4"
 
 
+def cached_json_video_path(json_path: Path | str) -> Path:
+    """Return the standard cached rollout video path for a JSON scenario."""
+    return DEFAULT_VIDEO_CACHE_DIR / f"{Path(json_path).stem}.mp4"
+
+
 def object_type_from_name(name: str) -> Any:
     """Return the Waymax ObjectType enum value for the given name string."""
     return getattr(waymax_config.ObjectType, name)
@@ -344,8 +366,28 @@ def load_scenario_from_path(
     return tfrecord, scenario
 
 
+def load_scenario_from_json(args: argparse.Namespace, json_path: Path) -> tuple[Path, Any]:
+    """Preprocess a ScenarioMax/PufferDrive JSON, then load it as a Waymax scenario."""
+    try:
+        tfrecord, stats = preprocess_json_to_tfexample(
+            source_json=json_path,
+            overwrite=True,
+        )
+    except PreprocessError as exc:
+        raise UserInputError(str(exc)) from exc
+    if args.verbose:
+        print(f"Preprocessed JSON -> {tfrecord}")
+        print(f"Preprocess stats: {stats}")
+
+    validate_waymax_tfrecord(tfrecord)
+    scenario = load_tfexample_scenario(args, tfrecord, 0)
+    return tfrecord, scenario
+
+
 def load_scenario(args: argparse.Namespace) -> tuple[Path, Any]:
     """Resolve the TFRecord path from args and load the requested scenario."""
+    if args.json is not None:
+        return load_scenario_from_json(args, args.json)
     return load_scenario_from_path(args, resolve_tfrecord(args), args.scenario_index)
 
 
@@ -696,7 +738,9 @@ def pufferdrive_action(args: argparse.Namespace, state: Any, puffer_model: Any) 
     if puffer_model is None:
         raise UserInputError("--policy pufferdrive requires a loaded PufferDrive model")
     obs = pufferdrive_observation_from_waymax(state)
+    viz_model_tool.add_input(obs) # TODO
     action_value = puffer_model.step(obs)
+    viz_model_tool.add_output(action_value) # TODO
     return pufferdrive_action_to_waymax(action_value, state)
 
 
@@ -892,6 +936,8 @@ def rollout_scenario(
 
 def run(args: argparse.Namespace) -> tuple[Any, dict[str, float]]:
     """Run a single scenario rollout and print results; returns (state, metrics)."""
+    if args.synthetic and args.json is not None:
+        raise UserInputError("--synthetic and --json are mutually exclusive")
     if args.synthetic:
         tfrecord = None
         scenario = make_synthetic_scenario(args)
@@ -906,6 +952,7 @@ def run(args: argparse.Namespace) -> tuple[Any, dict[str, float]]:
         puffer_model=puffer_model,
         collect_states=args.video,
     )
+    
 
     if args.verbose:
         print(f"Input: {'synthetic zero scenario' if args.synthetic else tfrecord}")
@@ -919,15 +966,26 @@ def run(args: argparse.Namespace) -> tuple[Any, dict[str, float]]:
     print(f"Metrics: {metric_summary}")
 
     if args.video:
+        video_path = (
+            cached_json_video_path(args.json)
+            if args.json is not None
+            else cached_video_path(args.split, args.file_index, args.scenario_index)
+        )
         output, frame_count, duration = render_rollout_mp4(
             states,
-            cached_video_path(args.split, args.file_index, args.scenario_index),
+            video_path,
             fps=RENDER_FPS,
             use_log_traj=False,
         )
         print(
             f"Wrote {output} ({frame_count} frames, {duration:.2f}s at {RENDER_FPS} fps)"
         )
+        
+        # TODO
+        model_video_path = video_path.with_name(video_path.stem + "_model.mp4")
+        viz_model_tool.create_video(model_video_path)
+        print(f"Wrote model video {model_video_path}")
+        
 
     return state, metric_summary
 

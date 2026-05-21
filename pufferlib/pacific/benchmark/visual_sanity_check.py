@@ -13,9 +13,9 @@ import torch
 from matplotlib.patches import Polygon
 
 from pufferlib.pufferl import load_config, load_env, load_policy
-from pufferlib.ocean.benchmark.evaluator import WOSACEvaluator
-from pufferlib.ocean.benchmark.metrics import compute_interaction_features, compute_map_features
-from pufferlib.ocean.benchmark.geometry_utils import get_2d_box_corners
+from pufferlib.pacific.benchmark.evaluator import WOSACEvaluator
+from pufferlib.pacific.benchmark.metrics import compute_interaction_features, compute_map_features
+from pufferlib.pacific.benchmark.geometry_utils import get_2d_box_corners
 
 
 def plot_road_edges(ax, road_edge_polylines, scenario_id):
@@ -87,7 +87,7 @@ def plot_agent_trajectories(ax, traj, agent_mask, rollout_idx, collisions, offro
 
 def main():
     parser = argparse.ArgumentParser(description="Visual validation of collision/offroad detection")
-    parser.add_argument("--env", default="puffer_drive")
+    parser.add_argument("--env", default="bad_driver")
     parser.add_argument("--output", default="visual_sanity_check.png")
     args = parser.parse_args()
 

@@ -9,7 +9,7 @@ import argparse
 import numpy as np
 
 from pufferlib.pufferl import load_config, load_env, load_policy
-from pufferlib.ocean.benchmark.evaluator import WOSACEvaluator
+from pufferlib.pacific.benchmark.evaluator import WOSACEvaluator
 
 
 def replace_rollouts_with_gt(simulated_traj, gt_traj, num_replacements):
@@ -80,8 +80,8 @@ def format_results_table(results):
 
 def main():
     parser = argparse.ArgumentParser(description="Validate WOSAC log-likelihood metrics")
-    parser.add_argument("--env", default="puffer_drive")
-    parser.add_argument("--config", default="config/ocean/drive.ini")
+    parser.add_argument("--env", default="bad_driver")
+    parser.add_argument("--config", default="config/pacific/bad_driver.ini")
     args = parser.parse_args()
 
     config = load_config(args.env)

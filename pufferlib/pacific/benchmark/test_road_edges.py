@@ -1,6 +1,6 @@
 """Test script for road edge extraction.
 
-Run with: python -m pufferlib.ocean.benchmark.test_road_edges
+Run with: python -m pufferlib.pacific.benchmark.test_road_edges
 """
 
 import numpy as np
@@ -11,13 +11,13 @@ from pufferlib.pufferl import load_config
 
 
 def main():
-    env_name = "puffer_drive"
+    env_name = "bad_driver"
     args = load_config(env_name)
 
     args["vec"] = dict(backend="PufferEnv", num_envs=1)
     args["env"]["num_agents"] = 32
 
-    from pufferlib.ocean import env_creator
+    from pufferlib.pacific import env_creator
 
     make_env = env_creator(env_name)
     vecenv = pufferlib.vector.make(make_env, env_kwargs=args["env"], **args["vec"])
