@@ -238,7 +238,9 @@ extension_kwargs = dict(
 # Find C extensions
 c_extensions = []
 if not NO_OCEAN:
-    c_extension_paths = glob.glob("pufferlib/ocean/**/binding.c", recursive=True)
+    c_extension_paths = []
+    for package in ("ocean", "pacific"):
+        c_extension_paths.extend(glob.glob(f"pufferlib/{package}/**/binding.c", recursive=True))
     c_extensions = [
         Extension(
             path.rstrip(".c").replace("/", "."),
