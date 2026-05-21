@@ -58,8 +58,10 @@ int demo(const char *map_name, const char *policy_name, int show_grid, int obs_o
     Drive env = {
         .action_type = conf.action_type,
         .dynamics_model = conf.dynamics_model,
-        .reward_vehicle_collision = conf.reward_vehicle_collision,
-        .reward_offroad_collision = conf.reward_offroad_collision,
+        .collision_factor_min = conf.collision_factor_min,
+        .collision_factor_max = conf.collision_factor_max,
+        .offroad_factor_min = conf.offroad_factor_min,
+        .offroad_factor_max = conf.offroad_factor_max,
         .reward_goal = conf.reward_goal,
         .reward_goal_post_respawn = conf.reward_goal_post_respawn,
         .goal_radius = conf.goal_radius,

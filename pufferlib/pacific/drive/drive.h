@@ -100,8 +100,8 @@
 #define PARTNER_FEATURES 7
 
 // Ego features depend on dynamics model
-#define EGO_FEATURES_CLASSIC 8
-#define EGO_FEATURES_JERK 11
+#define EGO_FEATURES_CLASSIC 10
+#define EGO_FEATURES_JERK 13
 
 // Observation normalization constants
 #define MAX_SPEED 100.0f
@@ -245,6 +245,8 @@ struct Entity {
     float jerk_lat;
     float steering_angle;
     float wheelbase;
+    float collision_factor;
+    float offroad_factor;
 };
 
 void free_entity(Entity *entity) {
@@ -278,6 +280,11 @@ float clip(float value, float min, float max) {
     if (value > max)
         return max;
     return value;
+}
+
+float sample_open_interval(float min, float max) {
+    float random_interval = ((float)rand() + 1.0f) / ((float)RAND_MAX + 2.0f);
+    return min + random_interval * (max - min);
 }
 
 typedef struct GridMapEntity GridMapEntity;
@@ -334,8 +341,10 @@ struct Drive {
     int *neighbor_offsets;
     int episode_length;
     int termination_mode;
-    float reward_vehicle_collision;
-    float reward_offroad_collision;
+    float collision_factor_min;
+    float collision_factor_max;
+    float offroad_factor_min;
+    float offroad_factor_max;
     char *map_name;
     float world_mean_x;
     float world_mean_y;
@@ -1854,6 +1863,8 @@ void compute_observations(Drive *env) {
             obs[6] = (ego_entity->respawn_timestep != -1) ? 1 : 0;
             obs[7] = ego_entity->type / 3.0f;
         }
+        obs[ego_dim - 2] = ego_entity->collision_factor;
+        obs[ego_dim - 1] = ego_entity->offroad_factor;
 
         // Relative Pos of other cars
         int obs_idx = ego_dim;
@@ -2050,6 +2061,10 @@ void c_reset(Drive *env) {
         env->entities[agent_idx].metrics_array[LANE_ALIGNED_IDX] = 0.0f;
         env->entities[agent_idx].stopped = 0;
         env->entities[agent_idx].removed = 0;
+        env->entities[agent_idx].collision_factor =
+            sample_open_interval(env->collision_factor_min, env->collision_factor_max);
+        env->entities[agent_idx].offroad_factor =
+            sample_open_interval(env->offroad_factor_min, env->offroad_factor_max);
 
         if (env->goal_behavior == GOAL_GENERATE_NEW) {
             env->entities[agent_idx].goal_position_x = env->entities[agent_idx].init_goal_x;
@@ -2129,13 +2144,15 @@ void c_step(Drive *env) {
 
         if (collision_state > 0) {
             if (collision_state == VEHICLE_COLLISION) {
-                env->rewards[i] += env->reward_vehicle_collision;
-                env->logs[i].episode_return += env->reward_vehicle_collision;
+                float collision_reward = -env->entities[agent_idx].collision_factor;
+                env->rewards[i] += collision_reward;
+                env->logs[i].episode_return += collision_reward;
                 env->logs[i].collision_rate = 1.0f;
                 env->logs[i].collisions_per_agent += 1.0f;
             } else if (collision_state == OFFROAD) {
-                env->rewards[i] += env->reward_offroad_collision;
-                env->logs[i].episode_return += env->reward_offroad_collision;
+                float offroad_reward = -env->entities[agent_idx].offroad_factor;
+                env->rewards[i] += offroad_reward;
+                env->logs[i].episode_return += offroad_reward;
                 env->logs[i].offroad_rate = 1.0f;
                 env->logs[i].offroad_per_agent += 1.0f;
             }

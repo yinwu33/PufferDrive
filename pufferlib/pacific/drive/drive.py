@@ -24,8 +24,10 @@ class Drive(pufferlib.PufferEnv):
         width=1280,
         height=1024,
         human_agent_idx=0,
-        reward_vehicle_collision=-0.1,
-        reward_offroad_collision=-0.1,
+        collision_factor_min=0.0,
+        collision_factor_max=1.0,
+        offroad_factor_min=0.0,
+        offroad_factor_max=1.0,
         reward_goal=1.0,
         reward_goal_post_respawn=0.5,
         goal_behavior=0,
@@ -56,8 +58,10 @@ class Drive(pufferlib.PufferEnv):
         self.render_mode = render_mode
         self.num_maps = num_maps
         self.report_interval = report_interval
-        self.reward_vehicle_collision = reward_vehicle_collision
-        self.reward_offroad_collision = reward_offroad_collision
+        self.collision_factor_min = collision_factor_min
+        self.collision_factor_max = collision_factor_max
+        self.offroad_factor_min = offroad_factor_min
+        self.offroad_factor_max = offroad_factor_max
         self.reward_goal = reward_goal
         self.reward_goal_post_respawn = reward_goal_post_respawn
         self.goal_radius = goal_radius
@@ -193,8 +197,10 @@ class Drive(pufferlib.PufferEnv):
                 seed,
                 action_type=self._action_type_flag,
                 human_agent_idx=human_agent_idx,
-                reward_vehicle_collision=reward_vehicle_collision,
-                reward_offroad_collision=reward_offroad_collision,
+                collision_factor_min=collision_factor_min,
+                collision_factor_max=collision_factor_max,
+                offroad_factor_min=offroad_factor_min,
+                offroad_factor_max=offroad_factor_max,
                 reward_goal=reward_goal,
                 reward_goal_post_respawn=reward_goal_post_respawn,
                 goal_radius=goal_radius,
@@ -260,8 +266,10 @@ class Drive(pufferlib.PufferEnv):
                 seed,
                 action_type=self._action_type_flag,
                 human_agent_idx=self.human_agent_idx,
-                reward_vehicle_collision=self.reward_vehicle_collision,
-                reward_offroad_collision=self.reward_offroad_collision,
+                collision_factor_min=self.collision_factor_min,
+                collision_factor_max=self.collision_factor_max,
+                offroad_factor_min=self.offroad_factor_min,
+                offroad_factor_max=self.offroad_factor_max,
                 reward_goal=self.reward_goal,
                 reward_goal_post_respawn=self.reward_goal_post_respawn,
                 goal_radius=self.goal_radius,
