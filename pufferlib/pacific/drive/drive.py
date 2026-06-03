@@ -28,6 +28,9 @@ class Drive(pufferlib.PufferEnv):
         collision_factor_max=1.0,
         offroad_factor_min=0.0,
         offroad_factor_max=1.0,
+        condition_sample_mode="random",
+        fixed_collision_factor=1.0,
+        fixed_offroad_factor=1.0,
         reward_goal=1.0,
         reward_goal_post_respawn=0.5,
         goal_behavior=0,
@@ -62,6 +65,9 @@ class Drive(pufferlib.PufferEnv):
         self.collision_factor_max = collision_factor_max
         self.offroad_factor_min = offroad_factor_min
         self.offroad_factor_max = offroad_factor_max
+        self.condition_sample_mode_str = condition_sample_mode
+        self.fixed_collision_factor = fixed_collision_factor
+        self.fixed_offroad_factor = fixed_offroad_factor
         self.reward_goal = reward_goal
         self.reward_goal_post_respawn = reward_goal_post_respawn
         self.goal_radius = goal_radius
@@ -123,6 +129,15 @@ class Drive(pufferlib.PufferEnv):
             self.sample_mode = 1
         else:
             raise ValueError(f"sample_mode must be one of 'random' or 'sequential'. Got: {self.sample_mode_str}")
+
+        if self.condition_sample_mode_str == "random":
+            self.condition_sample_mode = 0
+        elif self.condition_sample_mode_str == "fixed":
+            self.condition_sample_mode = 1
+        else:
+            raise ValueError(
+                f"condition_sample_mode must be one of 'random' or 'fixed'. Got: {self.condition_sample_mode_str}"
+            )
 
         if self.init_mode_str == "create_all_valid":
             self.init_mode = 0
@@ -201,6 +216,9 @@ class Drive(pufferlib.PufferEnv):
                 collision_factor_max=collision_factor_max,
                 offroad_factor_min=offroad_factor_min,
                 offroad_factor_max=offroad_factor_max,
+                condition_sample_mode=self.condition_sample_mode,
+                fixed_collision_factor=fixed_collision_factor,
+                fixed_offroad_factor=fixed_offroad_factor,
                 reward_goal=reward_goal,
                 reward_goal_post_respawn=reward_goal_post_respawn,
                 goal_radius=goal_radius,
@@ -270,6 +288,9 @@ class Drive(pufferlib.PufferEnv):
                 collision_factor_max=self.collision_factor_max,
                 offroad_factor_min=self.offroad_factor_min,
                 offroad_factor_max=self.offroad_factor_max,
+                condition_sample_mode=self.condition_sample_mode,
+                fixed_collision_factor=self.fixed_collision_factor,
+                fixed_offroad_factor=self.fixed_offroad_factor,
                 reward_goal=self.reward_goal,
                 reward_goal_post_respawn=self.reward_goal_post_respawn,
                 goal_radius=self.goal_radius,

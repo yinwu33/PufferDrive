@@ -1,3 +1,9 @@
+## Installation
+
+```bash
+python setup.py build_ext --inplace --force
+```
+
 ## Training
 
 ### training bad_driver in pacific

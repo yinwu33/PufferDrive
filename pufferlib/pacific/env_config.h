@@ -15,6 +15,9 @@ typedef struct {
     float collision_factor_max;
     float offroad_factor_min;
     float offroad_factor_max;
+    int condition_sample_mode;
+    float fixed_collision_factor;
+    float fixed_offroad_factor;
     float reward_goal;
     float reward_goal_post_respawn;
     float reward_vehicle_collision_post_respawn;
@@ -70,6 +73,19 @@ static int handler(void *config, const char *section, const char *name, const ch
         env_config->offroad_factor_min = atof(value);
     } else if (MATCH("env", "offroad_factor_max")) {
         env_config->offroad_factor_max = atof(value);
+    } else if (MATCH("env", "condition_sample_mode")) {
+        if (strcmp(value, "\"random\"") == 0 || strcmp(value, "random") == 0) {
+            env_config->condition_sample_mode = 0;
+        } else if (strcmp(value, "\"fixed\"") == 0 || strcmp(value, "fixed") == 0) {
+            env_config->condition_sample_mode = 1;
+        } else {
+            printf("Warning: Unknown condition_sample_mode value '%s', defaulting to random\n", value);
+            env_config->condition_sample_mode = 0;
+        }
+    } else if (MATCH("env", "fixed_collision_factor")) {
+        env_config->fixed_collision_factor = atof(value);
+    } else if (MATCH("env", "fixed_offroad_factor")) {
+        env_config->fixed_offroad_factor = atof(value);
     } else if (MATCH("env", "reward_goal")) {
         env_config->reward_goal = atof(value);
     } else if (MATCH("env", "reward_goal_post_respawn")) {

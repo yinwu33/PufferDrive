@@ -799,6 +799,9 @@ class Evaluator:
         eval_config["env"]["map_dir"] = eval_config["eval"]["map_dir"]
         eval_config["env"]["num_agents"] = eval_config["eval"]["num_eval_agents"]
         eval_config["env"]["sample_mode"] = eval_config["eval"]["sample_mode"]
+        eval_config["env"]["condition_sample_mode"] = eval_config["eval"]["condition_sample_mode"]
+        eval_config["env"]["fixed_collision_factor"] = eval_config["eval"]["fixed_collision_factor"]
+        eval_config["env"]["fixed_offroad_factor"] = eval_config["eval"]["fixed_offroad_factor"]
         eval_config["env"]["episode_length"] = 91  # WOMD scenario length
         eval_config["vec"] = dict(backend=backend, num_envs=1)
 

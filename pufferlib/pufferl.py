@@ -1067,6 +1067,9 @@ def eval(env_name, args=None, vecenv=None, policy=None):
     # Eval modes may use eval-specific map sampling config.
     if "sample_mode" in args["eval"]:
         args["env"]["sample_mode"] = args["eval"]["sample_mode"]
+    for key in ("condition_sample_mode", "fixed_collision_factor", "fixed_offroad_factor"):
+        if key in args["eval"]:
+            args["env"][key] = args["eval"][key]
     if "map_dir" in args["eval"]:
         args["env"]["map_dir"] = args["eval"]["map_dir"]
 

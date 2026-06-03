@@ -225,6 +225,9 @@ static int my_init(Env *env, PyObject *args, PyObject *kwargs) {
     OVERRIDE_FLOAT(collision_factor_max);
     OVERRIDE_FLOAT(offroad_factor_min);
     OVERRIDE_FLOAT(offroad_factor_max);
+    OVERRIDE_INT(condition_sample_mode);
+    OVERRIDE_FLOAT(fixed_collision_factor);
+    OVERRIDE_FLOAT(fixed_offroad_factor);
     OVERRIDE_FLOAT(reward_goal);
     OVERRIDE_FLOAT(reward_goal_post_respawn);
     OVERRIDE_INT(collision_behavior);
@@ -248,6 +251,9 @@ static int my_init(Env *env, PyObject *args, PyObject *kwargs) {
     env->collision_factor_max = conf.collision_factor_max;
     env->offroad_factor_min = conf.offroad_factor_min;
     env->offroad_factor_max = conf.offroad_factor_max;
+    env->condition_sample_mode = conf.condition_sample_mode;
+    env->fixed_collision_factor = conf.fixed_collision_factor;
+    env->fixed_offroad_factor = conf.fixed_offroad_factor;
     env->reward_goal = conf.reward_goal;
     env->reward_goal_post_respawn = conf.reward_goal_post_respawn;
     env->episode_length = conf.episode_length;

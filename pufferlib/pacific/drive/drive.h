@@ -58,6 +58,10 @@
 #define CONTROL_SDC_ONLY 3
 #define CONTROL_MIXED_PLAY 4
 
+// Condition sampling modes
+#define CONDITION_RANDOM 0
+#define CONDITION_FIXED 1
+
 // Minimum distance to goal position
 #define MIN_DISTANCE_TO_GOAL 2.0f
 
@@ -345,6 +349,9 @@ struct Drive {
     float collision_factor_max;
     float offroad_factor_min;
     float offroad_factor_max;
+    int condition_sample_mode;
+    float fixed_collision_factor;
+    float fixed_offroad_factor;
     char *map_name;
     float world_mean_x;
     float world_mean_y;
@@ -2061,10 +2068,15 @@ void c_reset(Drive *env) {
         env->entities[agent_idx].metrics_array[LANE_ALIGNED_IDX] = 0.0f;
         env->entities[agent_idx].stopped = 0;
         env->entities[agent_idx].removed = 0;
-        env->entities[agent_idx].collision_factor =
-            sample_open_interval(env->collision_factor_min, env->collision_factor_max);
-        env->entities[agent_idx].offroad_factor =
-            sample_open_interval(env->offroad_factor_min, env->offroad_factor_max);
+        if (env->condition_sample_mode == CONDITION_FIXED) {
+            env->entities[agent_idx].collision_factor = env->fixed_collision_factor;
+            env->entities[agent_idx].offroad_factor = env->fixed_offroad_factor;
+        } else {
+            env->entities[agent_idx].collision_factor =
+                sample_open_interval(env->collision_factor_min, env->collision_factor_max);
+            env->entities[agent_idx].offroad_factor =
+                sample_open_interval(env->offroad_factor_min, env->offroad_factor_max);
+        }
 
         if (env->goal_behavior == GOAL_GENERATE_NEW) {
             env->entities[agent_idx].goal_position_x = env->entities[agent_idx].init_goal_x;
