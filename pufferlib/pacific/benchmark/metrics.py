@@ -2,6 +2,8 @@
 https://github.com/waymo-research/waymo-open-dataset/blob/master/src/waymo_open_dataset/wdl_limited/sim_agents_metrics/metrics.py
 """
 
+from __future__ import annotations
+
 import numpy as np
 import torch
 from typing import Tuple

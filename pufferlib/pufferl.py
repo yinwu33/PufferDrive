@@ -2,6 +2,8 @@
 # This is the same as python -m pufferlib.pufferl [train | eval | sweep] [env_name] [optional args]
 # Distributed example: torchrun --standalone --nnodes=1 --nproc-per-node=6 -m pufferlib.pufferl train puffer_nmmo3
 
+from __future__ import annotations
+
 import contextlib
 import warnings
 
@@ -44,6 +46,7 @@ except ImportError:
     raise ImportError(
         "Failed to import C/CUDA advantage kernel. If you have non-default PyTorch, try installing with --no-build-isolation"
     )
+    _C = None  # this is cpu callback, activate it with commeting the "raise" above
 
 import rich
 import rich.traceback
@@ -59,6 +62,7 @@ signal.signal(signal.SIGINT, lambda sig, frame: os._exit(0))
 
 # Assume advantage kernel has been built if CUDA compiler is available
 ADVANTAGE_CUDA = shutil.which("nvcc") is not None
+ADVANTAGE_EXTENSION = _C is not None
 
 
 class PuffeRL:
@@ -734,6 +738,22 @@ def compute_puff_advantage(
     compile the fast version."""
 
     device = values.device
+    if not ADVANTAGE_EXTENSION:
+        values = values.cpu()
+        rewards = rewards.cpu()
+        terminals = terminals.cpu()
+        ratio = ratio.cpu()
+        advantages = advantages.cpu()
+        last = torch.zeros(values.shape[0], dtype=values.dtype)
+        for t in range(values.shape[1] - 2, -1, -1):
+            next_nonterminal = 1.0 - terminals[:, t + 1]
+            rho_t = torch.minimum(ratio[:, t], torch.tensor(vtrace_rho_clip, dtype=ratio.dtype))
+            c_t = torch.minimum(ratio[:, t], torch.tensor(vtrace_c_clip, dtype=ratio.dtype))
+            delta = rho_t * (rewards[:, t + 1] + gamma * values[:, t + 1] * next_nonterminal - values[:, t])
+            last = delta + gamma * gae_lambda * c_t * last * next_nonterminal
+            advantages[:, t] = last
+        return advantages.to(device)
+
     if not ADVANTAGE_CUDA:
         values = values.cpu()
         rewards = rewards.cpu()

@@ -232,6 +232,8 @@ static int my_init(Env *env, PyObject *args, PyObject *kwargs) {
     OVERRIDE_FLOAT(reward_goal_post_respawn);
     OVERRIDE_INT(collision_behavior);
     OVERRIDE_INT(offroad_behavior);
+    OVERRIDE_INT(offroad_mode);
+    OVERRIDE_FLOAT(lane_width);
     OVERRIDE_FLOAT(dt);
     OVERRIDE_INT(termination_mode);
     OVERRIDE_INT(init_mode);
@@ -260,6 +262,8 @@ static int my_init(Env *env, PyObject *args, PyObject *kwargs) {
     env->termination_mode = conf.termination_mode;
     env->collision_behavior = conf.collision_behavior;
     env->offroad_behavior = conf.offroad_behavior;
+    env->offroad_mode = conf.offroad_mode;
+    env->lane_width = conf.lane_width > 0.0f ? conf.lane_width : 3.5f;
     env->max_controlled_agents = unpack(kwargs, "max_controlled_agents");
     env->dt = conf.dt;
     env->init_mode = (int)unpack(kwargs, "init_mode");

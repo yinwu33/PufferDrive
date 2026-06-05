@@ -1,5 +1,7 @@
 """WOSAC evaluation class for PufferDrive."""
 
+from __future__ import annotations
+
 import copy
 import torch
 import numpy as np

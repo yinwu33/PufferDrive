@@ -1,5 +1,7 @@
 """Simplified estimators to compute log-likelihood of simulated trajs based on https://github.com/waymo-research/waymo-open-dataset/blob/master/src/waymo_open_dataset/wdl_limited/sim_agents_metrics/estimators.py"""
 
+from __future__ import annotations
+
 import numpy as np
 import matplotlib.pyplot as plt
 from typing import Optional

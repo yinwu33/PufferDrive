@@ -4,6 +4,8 @@ Adapted from Waymo Open Dataset:
 https://github.com/waymo-research/waymo-open-dataset/blob/master/src/waymo_open_dataset/wdl_limited/sim_agents_metrics/map_metric_features.py
 """
 
+from __future__ import annotations
+
 import torch
 
 from pufferlib.ocean.benchmark.geometry_utils import (

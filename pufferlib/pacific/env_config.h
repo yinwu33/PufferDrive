@@ -25,6 +25,8 @@ typedef struct {
     float goal_speed;
     int collision_behavior;
     int offroad_behavior;
+    int offroad_mode;
+    float lane_width;
     int spawn_immunity_timer;
     float dt;
     int goal_behavior;
@@ -100,6 +102,17 @@ static int handler(void *config, const char *section, const char *name, const ch
         env_config->collision_behavior = atoi(value);
     } else if (MATCH("env", "offroad_behavior")) {
         env_config->offroad_behavior = atoi(value);
+    } else if (MATCH("env", "offroad_mode")) {
+        if (strcmp(value, "\"road_edge\"") == 0 || strcmp(value, "road_edge") == 0) {
+            env_config->offroad_mode = 0;
+        } else if (strcmp(value, "\"lane_center\"") == 0 || strcmp(value, "lane_center") == 0) {
+            env_config->offroad_mode = 1;
+        } else {
+            printf("Warning: Unknown offroad_mode value '%s', defaulting to road_edge\n", value);
+            env_config->offroad_mode = 0;
+        }
+    } else if (MATCH("env", "lane_width")) {
+        env_config->lane_width = atof(value);
     } else if (MATCH("env", "spawn_immunity_timer")) {
         env_config->spawn_immunity_timer = atoi(value);
     } else if (MATCH("env", "dt")) {

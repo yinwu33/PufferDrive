@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import numpy as np
 import gymnasium
 import json
@@ -39,6 +41,8 @@ class Drive(pufferlib.PufferEnv):
         goal_speed=20.0,
         collision_behavior=0,
         offroad_behavior=0,
+        offroad_mode="road_edge",
+        lane_width=3.5,
         dt=0.1,
         episode_length=None,
         termination_mode=None,
@@ -76,6 +80,8 @@ class Drive(pufferlib.PufferEnv):
         self.goal_target_distance = goal_target_distance
         self.collision_behavior = collision_behavior
         self.offroad_behavior = offroad_behavior
+        self.offroad_mode_str = offroad_mode
+        self.lane_width = lane_width
         self.human_agent_idx = human_agent_idx
         self.episode_length = episode_length
         self.termination_mode = termination_mode
@@ -146,6 +152,15 @@ class Drive(pufferlib.PufferEnv):
         else:
             raise ValueError(
                 f"init_mode must be one of 'create_all_valid' or 'create_only_controlled'. Got: {self.init_mode_str}"
+            )
+
+        if self.offroad_mode_str == "road_edge":
+            self.offroad_mode = 0
+        elif self.offroad_mode_str == "lane_center":
+            self.offroad_mode = 1
+        else:
+            raise ValueError(
+                f"offroad_mode must be one of 'road_edge' or 'lane_center'. Got: {self.offroad_mode_str}"
             )
 
         if action_type == "discrete":
@@ -227,6 +242,8 @@ class Drive(pufferlib.PufferEnv):
                 goal_target_distance=self.goal_target_distance,
                 collision_behavior=self.collision_behavior,
                 offroad_behavior=self.offroad_behavior,
+                offroad_mode=self.offroad_mode,
+                lane_width=self.lane_width,
                 dt=dt,
                 episode_length=(int(episode_length) if episode_length is not None else None),
                 termination_mode=(int(self.termination_mode) if self.termination_mode is not None else 0),
@@ -299,6 +316,8 @@ class Drive(pufferlib.PufferEnv):
                 goal_speed=self.goal_speed,
                 collision_behavior=self.collision_behavior,
                 offroad_behavior=self.offroad_behavior,
+                offroad_mode=self.offroad_mode,
+                lane_width=self.lane_width,
                 dt=self.dt,
                 episode_length=(int(self.episode_length) if self.episode_length is not None else None),
                 map_id=map_ids[i],

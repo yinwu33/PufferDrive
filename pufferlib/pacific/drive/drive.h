@@ -127,6 +127,10 @@
 #define GOAL_GENERATE_NEW 1
 #define GOAL_STOP 2
 
+// Offroad behavior
+#define OFFROAD_ROAD_EDGE 0
+#define OFFROAD_LANE_CENTER 1
+
 // Jerk action space (for JERK dynamics model)
 static const float JERK_LONG[4] = {-15.0f, -4.0f, 0.0f, 4.0f};
 static const float JERK_LAT[3] = {-4.0f, 0.0f, 4.0f};
@@ -367,6 +371,8 @@ struct Drive {
     char scenario_id[16];
     int collision_behavior;
     int offroad_behavior;
+    int offroad_mode;
+    float lane_width;
     int sdc_track_index;
     int num_tracks_to_predict;
     int *tracks_to_predict_indices;
@@ -1144,9 +1150,12 @@ void compute_agent_metrics(Drive *env, int agent_idx) {
     float cos_heading = cosf(agent->heading);
     float sin_heading = sinf(agent->heading);
     float min_distance = (float)INT16_MAX;
+    float min_lane_center_distance = (float)INT16_MAX;
 
     int closest_lane_entity_idx = -1;
     int closest_lane_geometry_idx = -1;
+    int closest_aligned_lane_entity_idx = -1;
+    int closest_aligned_lane_geometry_idx = -1;
 
     float corners[4][2];
     for (int i = 0; i < 4; i++) {
@@ -1168,7 +1177,7 @@ void compute_agent_metrics(Drive *env, int agent_idx) {
         entity = &env->entities[entity_list[i].entity_idx];
 
         // Check for offroad collision with road edges (only for vehicles and cyclists)
-        if (entity->type == ROAD_EDGE && agent->type != PEDESTRIAN) {
+        if (env->offroad_mode == OFFROAD_ROAD_EDGE && entity->type == ROAD_EDGE && agent->type != PEDESTRIAN) {
             int geometry_idx = entity_list[i].geometry_idx;
             float start[2] = {entity->traj_x[geometry_idx], entity->traj_y[geometry_idx]};
             float end[2] = {entity->traj_x[geometry_idx + 1], entity->traj_y[geometry_idx + 1]};
@@ -1193,6 +1202,12 @@ void compute_agent_metrics(Drive *env, int agent_idx) {
             float end[2] = {entity->traj_x[geometry_idx + 1], entity->traj_y[geometry_idx + 1]};
 
             float dist = point_to_segment_distance_2d(agent->x, agent->y, start[0], start[1], end[0], end[1]);
+            if (dist < min_lane_center_distance) {
+                min_lane_center_distance = dist;
+                closest_lane_entity_idx = entity_idx;
+                closest_lane_geometry_idx = geometry_idx;
+            }
+
             float heading_diff = fabsf(atan2f(end[1] - start[1], end[0] - start[0]) - agent->heading);
 
             // Normalize heading difference to [0, pi]
@@ -1205,21 +1220,27 @@ void compute_agent_metrics(Drive *env, int agent_idx) {
 
             if (dist < min_distance) {
                 min_distance = dist;
-                closest_lane_entity_idx = entity_idx;
-                closest_lane_geometry_idx = geometry_idx;
+                closest_aligned_lane_entity_idx = entity_idx;
+                closest_aligned_lane_geometry_idx = geometry_idx;
             }
         }
     }
 
-    // check if aligned with closest lane and set current lane
-    // 4.0m threshold: agents more than 4 meters from any lane are considered off-road
-    if (min_distance > 4.0f || closest_lane_entity_idx == -1) {
+    if (env->offroad_mode == OFFROAD_LANE_CENTER && agent->type != PEDESTRIAN) {
+        float lane_half_width = env->lane_width * 0.5f;
+        if (closest_lane_entity_idx == -1 || min_lane_center_distance > lane_half_width) {
+            collided = OFFROAD;
+        }
+    }
+
+    // check if aligned with closest heading-compatible lane and set current lane
+    if (min_distance > 4.0f || closest_aligned_lane_entity_idx == -1) {
         agent->metrics_array[LANE_ALIGNED_IDX] = 0.0f;
         agent->current_lane_idx = -1;
     } else {
-        agent->current_lane_idx = closest_lane_entity_idx;
+        agent->current_lane_idx = closest_aligned_lane_entity_idx;
         int lane_aligned =
-            check_lane_aligned(agent, &env->entities[closest_lane_entity_idx], closest_lane_geometry_idx);
+            check_lane_aligned(agent, &env->entities[closest_aligned_lane_entity_idx], closest_aligned_lane_geometry_idx);
         agent->metrics_array[LANE_ALIGNED_IDX] = lane_aligned;
     }
 
@@ -2971,7 +2992,7 @@ void draw_scene(Drive *env, Client *client, int mode, int obs_only, int lasers, 
             }
         }
         // Draw road elements
-        if (env->entities[i].type <= 3 && env->entities[i].type >= 7) {
+        if (env->entities[i].type <= 3 || env->entities[i].type >= 7) {
             continue;
         }
         for (int j = 0; j < env->entities[i].array_size - 1; j++) {
@@ -2979,9 +3000,11 @@ void draw_scene(Drive *env, Client *client, int mode, int obs_only, int lasers, 
             Vector3 end = {env->entities[i].traj_x[j + 1], env->entities[i].traj_y[j + 1], Z_ROAD_MARKINGS};
             Color lineColor = GRAY;
             if (env->entities[i].type == ROAD_LANE)
-                lineColor = Fade(SOFT_YELLOW, 0.25f);
-            else if (env->entities[i].type == ROAD_LINE)
+                // lineColor = Fade(SOFT_YELLOW, 0.25f);
                 lineColor = WHITE;
+            else if (env->entities[i].type == ROAD_LINE)
+                // lineColor = WHITE;
+                lineColor = Fade(SOFT_YELLOW, 0.25f);
             else if (env->entities[i].type == ROAD_EDGE)
                 lineColor = Fade(WHITE, 0.7f);
             else if (env->entities[i].type == DRIVEWAY)
@@ -2991,8 +3014,30 @@ void draw_scene(Drive *env, Client *client, int mode, int obs_only, int lasers, 
                 if (env->entities[i].type == ROAD_EDGE) {
                     draw_road_edge(env, start.x, start.y, end.x, end.y);
                 } else if (env->entities[i].type == ROAD_LANE || env->entities[i].type == ROAD_LINE) {
-                    // Draw road lanes and lines as purple lines
-                    rlSetLineWidth(2.0f);
+                    if (env->offroad_mode == OFFROAD_LANE_CENTER && env->entities[i].type == ROAD_LANE) {
+                        // Draw the lane centerline as a 3.5m-wide filled band (road surface).
+                        // glLineWidth is clamped to ~1px by the GL driver, so fill a quad instead.
+                        float dx = end.x - start.x;
+                        float dy = end.y - start.y;
+                        float len = sqrtf(dx * dx + dy * dy);
+                        if (len > 1e-6f) {
+                            float half_width = 1.75f; // 3.5m lane width / 2
+                            float nx = -dy / len * half_width;
+                            float ny = dx / len * half_width;
+                            float zb = Z_ROAD_MARKINGS - 0.01f; // keep band just below the centerline
+                            Vector3 q0 = {start.x + nx, start.y + ny, zb};
+                            Vector3 q1 = {start.x - nx, start.y - ny, zb};
+                            Vector3 q2 = {end.x - nx, end.y - ny, zb};
+                            Vector3 q3 = {end.x + nx, end.y + ny, zb};
+                            rlDisableBackfaceCulling();
+                            DrawTriangle3D(q0, q1, q2, DARKGRAY);
+                            DrawTriangle3D(q0, q2, q3, DARKGRAY);
+                            rlEnableBackfaceCulling();
+                        }
+                    }
+                    rlSetLineWidth((env->offroad_mode == OFFROAD_LANE_CENTER && env->entities[i].type == ROAD_LANE)
+                                       ? 1.5f
+                                       : 2.0f);
                     DrawLine3D(start, end, lineColor);
                 }
             }
