@@ -1,0 +1,34 @@
+# DDPO config for the dm_goal scene-init model.
+# Fill in the four *_ckpt / pool / cfg paths before running.
+
+device: cuda
+seed: 0
+
+# --- artifacts (produced offline / pretrained) --------------------------------
+model_ckpt: ???            # scenario-dreamer dm_goal Lightning checkpoint (.ckpt)
+model_cfg: ???             # resolved dm_goal OmegaConf dumped by tools/dump_conditioning.py
+conditioning_pool: ???     # dir or .pt of dumped HeteroData conditioning graphs
+planner_ckpt: experiments/selfplay_drive_178059638260.pt  # frozen PufferDrive planner
+use_ema_weights: true
+
+# --- rollout / reward ---------------------------------------------------------
+batch_size: 16             # scenes generated + rolled out per iteration
+sim_steps: 91
+max_agents_per_scene: 32
+
+# --- DDPO ---------------------------------------------------------------------
+num_iterations: 2000
+inner_epochs: 1            # >1 requires estimator=is (PPO importance sampling)
+k_steps: 8                 # random denoising steps differentiated per update (of ~100)
+lr: 1e-5
+weight_decay: 1e-4
+grad_clip: 1.0
+save_every: 100
+output_dir: experiments/scene_init_ddpo
+
+ddpo:
+  estimator: is            # "sf" (REINFORCE) | "is" (PPO clip)
+  clip_range: 1.0e-4
+  kl_coef: 0.0             # >0 enables KL-to-base regularisation (recommended once stable)
+  adv_clip: 5.0
+  adv_eps: 1.0e-6
