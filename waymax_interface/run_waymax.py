@@ -44,6 +44,7 @@ from waymax_interface.tfrecord_preprocess import (
     preprocess_serialized_scenario_to_tfexample,
 )
 from waymax_interface.json_preprocess import preprocess_json_to_tfexample
+from waymax_interface.bin_preprocess import preprocess_bin_to_tfexample
 
 # TODO:
 from waymax_interface.viz_pufferdrive import VizPufferDrive
@@ -55,8 +56,6 @@ DATAROOT_DIR = Path("/mnt/disk/data/public/waymo/motion_v_1_3_1/scenario")
 DEFAULT_CACHE_PATH = REPO_ROOT / "waymax_interface" / "cache"
 DEFAULT_TFEXAMPLE_CACHE_DIR = DEFAULT_CACHE_PATH / "tfexample"
 DEFAULT_VIDEO_CACHE_DIR = DEFAULT_CACHE_PATH / "video"
-DEFAULT_PUFFER_CONFIG = REPO_ROOT / "config" / "ocean" / "drive.ini"
-DEFAULT_PUFFER_MODEL = REPO_ROOT / "experiments" / "puffer_drive_177878959462.pt"
 REQUIRED_WAYMAX_FEATURES = frozenset(
     ("roadgraph_samples/dir", "state/current/x", "state/future/x", "state/past/x")
 )
@@ -64,17 +63,57 @@ REQUIRED_WAYMAX_FEATURES = frozenset(
 INIT_STEPS = 11
 NUM_STEPS = 80
 RENDER_FPS = 10
-MAX_PARTNER_OBJECTS = 31
-MAX_ROAD_OBJECTS = 128
-EGO_FEATURES_CLASSIC = 8
 PARTNER_FEATURES = 7
 ROAD_FEATURES = 7
+
+# Per-policy specs. "pufferdrive" and "selfplay_drive" are *different* models with
+# different observation layouts, so each carries its own config, checkpoint and
+# obs geometry (these mirror the C constants in the respective drive.h):
+#   - pufferdrive   : ocean puffer_drive, classic ego = 8 base features (no
+#                     conditioning), MAX_AGENTS=32, 128 road segments, 50m range.
+#   - selfplay_drive: pacific selfplay_drive, classic ego = 8 base + 3 conditioning
+#                     features (collision_factor, offroad_factor, lane_width),
+#                     MAX_AGENTS=64, 512 road segments, 64m range (full 64x64 map).
+POLICY_SPECS: dict[str, dict[str, Any]] = {
+    "pufferdrive": {
+        "config_path": REPO_ROOT / "config" / "ocean" / "drive.ini",
+        "default_model": REPO_ROOT / "experiments" / "puffer_drive.pt",
+        "model_glob": "*puffer_drive*.pt",
+        "ego_features": 8,
+        "has_conditioning": False,
+        "max_partner_objects": 31,
+        "max_road_objects": 128,
+        "obs_range_sq": 2500.0,  # 50m
+    },
+    "selfplay_drive": {
+        "config_path": REPO_ROOT / "config" / "pacific" / "selfplay_drive.ini",
+        "default_model": (
+            REPO_ROOT
+            / "experiments"
+            / "selfplay_drive_178121292262"
+            / "model_selfplay_drive_009000.pt"
+        ),
+        "model_glob": "*selfplay_drive*.pt",
+        "ego_features": 11,
+        "has_conditioning": True,
+        "max_partner_objects": 63,
+        "max_road_objects": 512,
+        "obs_range_sq": 4096.0,  # 64m: full 64x64 map
+    },
+}
+PUFFER_POLICIES = tuple(POLICY_SPECS)
 MAX_SPEED = 100.0
 MAX_VEH_WIDTH = 15.0
 MAX_VEH_LEN = 30.0
 MAX_ROAD_SEGMENT_LENGTH = 100.0
 MAX_ROAD_SCALE = 100.0
 TIME_INTERVAL = 0.1
+# Conditioning inputs for the selfplay_drive model. These scale the collision /
+# offroad penalties the policy was trained against; higher = more cautious. The
+# values are fed into the ego observation raw (un-normalized), matching drive.h.
+DEFAULT_COLLISION_FACTOR = 2.0
+DEFAULT_OFFROAD_FACTOR = 2.0
+DEFAULT_LANE_WIDTH = 3.5
 ACCELERATION_VALUES = (-4.0, -2.667, -1.333, 0.0, 1.333, 2.667, 4.0)
 STEERING_VALUES = (
     -1.0,
@@ -123,13 +162,13 @@ def load_puffer_config(path: Path | str) -> dict[str, dict[str, Any]]:
     }
 
 
-def resolve_puffer_model(path: str) -> Path:
+def resolve_puffer_model(path: str, model_glob: str = "puffer_drive*.pt") -> Path:
     """Resolve a PufferDrive checkpoint path, or find the newest one for 'latest'."""
     if path == "latest":
-        candidates = glob.glob(str(REPO_ROOT / "experiments" / "puffer_drive*.pt"))
+        candidates = glob.glob(str(REPO_ROOT / "experiments" / "**" / model_glob), recursive=True)
         if not candidates:
             raise UserInputError(
-                "No puffer_drive*.pt checkpoints found in experiments/"
+                f"No {model_glob} checkpoints found under experiments/"
             )
         return Path(max(candidates, key=os.path.getctime))
 
@@ -162,6 +201,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Run Waymax on a ScenarioMax/PufferDrive JSON scenario.",
     )
     parser.add_argument(
+        "--bin",
+        type=Path,
+        default=None,
+        help="Run Waymax on a PufferDrive .bin map (selfplay_drive training format).",
+    )
+    parser.add_argument(
         "-f",
         "--file-index",
         type=int,
@@ -177,13 +222,43 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--policy",
-        choices=("expert", "constant_speed", "zero", "pufferdrive"),
+        choices=("expert", "constant_speed", "zero", "pufferdrive", "selfplay_drive"),
         default="pufferdrive",
+        help="SDC controller. 'pufferdrive' (ocean) and 'selfplay_drive' (pacific) "
+        "are different models with different observation layouts.",
+    )
+    parser.add_argument(
+        "--puffer-model",
+        type=str,
+        default=None,
+        help="Checkpoint path (or 'latest') for the puffer policy. Defaults to the "
+        "selected policy's built-in model.",
     )
     parser.add_argument(
         "--deterministic",
         action="store_true",
-        help="Use deterministic action selection for --policy pufferdrive.",
+        help="Use deterministic action selection for puffer policies.",
+    )
+    parser.add_argument(
+        "--collision-factor",
+        type=float,
+        default=DEFAULT_COLLISION_FACTOR,
+        help="selfplay_drive conditioning input: collision penalty scale "
+        "(higher = more cautious). Fed into the ego observation.",
+    )
+    parser.add_argument(
+        "--offroad-factor",
+        type=float,
+        default=DEFAULT_OFFROAD_FACTOR,
+        help="selfplay_drive conditioning input: offroad penalty scale "
+        "(higher = more cautious). Fed into the ego observation.",
+    )
+    parser.add_argument(
+        "--lane-width",
+        type=float,
+        default=DEFAULT_LANE_WIDTH,
+        help="selfplay_drive conditioning input: lane width (m, 1.0-5.0) used as "
+        "the offroad half-width tolerance. Fed into the ego observation.",
     )
     parser.add_argument(
         "--controlled-object", choices=("SDC", "MODELED", "VALID"), default="SDC"
@@ -384,8 +459,28 @@ def load_scenario_from_json(args: argparse.Namespace, json_path: Path) -> tuple[
     return tfrecord, scenario
 
 
+def load_scenario_from_bin(args: argparse.Namespace, bin_path: Path) -> tuple[Path, Any]:
+    """Preprocess a PufferDrive .bin map, then load it as a Waymax scenario."""
+    try:
+        tfrecord, stats = preprocess_bin_to_tfexample(
+            source_bin=bin_path,
+            overwrite=True,
+        )
+    except PreprocessError as exc:
+        raise UserInputError(str(exc)) from exc
+    if args.verbose:
+        print(f"Preprocessed .bin -> {tfrecord}")
+        print(f"Preprocess stats: {stats}")
+
+    validate_waymax_tfrecord(tfrecord)
+    scenario = load_tfexample_scenario(args, tfrecord, 0)
+    return tfrecord, scenario
+
+
 def load_scenario(args: argparse.Namespace) -> tuple[Path, Any]:
     """Resolve the TFRecord path from args and load the requested scenario."""
+    if args.bin is not None:
+        return load_scenario_from_bin(args, args.bin)
     if args.json is not None:
         return load_scenario_from_json(args, args.json)
     return load_scenario_from_path(args, resolve_tfrecord(args), args.scenario_index)
@@ -459,13 +554,13 @@ def zero_action(state: Any, env: Any) -> Any:
 class PufferDrivePolicyEnv:
     """Minimal env wrapper exposing observation/action spaces for the PufferDrive policy."""
 
-    def __init__(self) -> None:
-        """Initialise observation/action space dimensions."""
+    def __init__(self, spec: dict[str, Any]) -> None:
+        """Initialise observation/action space dimensions from a policy spec."""
         self.num_agents = 1
-        self.ego_features = EGO_FEATURES_CLASSIC
-        self.max_partner_objects = MAX_PARTNER_OBJECTS
+        self.ego_features = spec["ego_features"]
+        self.max_partner_objects = spec["max_partner_objects"]
         self.partner_features = PARTNER_FEATURES
-        self.max_road_objects = MAX_ROAD_OBJECTS
+        self.max_road_objects = spec["max_road_objects"]
         self.road_features = ROAD_FEATURES
         self.num_obs = (
             self.ego_features
@@ -481,11 +576,21 @@ class PufferDrivePolicyEnv:
 
 
 def build_puffer_model(args: argparse.Namespace) -> Any:
-    """Load and return the PufferDrive policy model."""
-    config = load_puffer_config(DEFAULT_PUFFER_CONFIG)
-    model_path = resolve_puffer_model(str(DEFAULT_PUFFER_MODEL))
+    """Load and return the puffer policy model for the selected --policy."""
+    spec = POLICY_SPECS[args.policy]
+    config = load_puffer_config(spec["config_path"])
+    model_path = resolve_puffer_model(
+        args.puffer_model or str(spec["default_model"]), spec["model_glob"]
+    )
+    # Keep the obs-visualizer's slicing layout in sync with the active policy.
+    viz_model_tool.set_layout(
+        spec["ego_features"], spec["max_partner_objects"], spec["max_road_objects"]
+    )
     return PufferModule(
-        config, PufferDrivePolicyEnv(), model_path, deterministic=args.deterministic
+        config,
+        PufferDrivePolicyEnv(spec),
+        model_path,
+        deterministic=args.deterministic,
     )
 
 
@@ -553,14 +658,24 @@ def road_category(road_type: int) -> int:
     return 6
 
 
-def pufferdrive_observation_from_waymax(state: Any) -> np.ndarray:
+def pufferdrive_observation_from_waymax(
+    state: Any,
+    spec: dict[str, Any],
+    collision_factor: float = DEFAULT_COLLISION_FACTOR,
+    offroad_factor: float = DEFAULT_OFFROAD_FACTOR,
+    lane_width: float = DEFAULT_LANE_WIDTH,
+) -> np.ndarray:
     """Build a PufferDrive observation vector from the current Waymax simulator state."""
+    ego_features = spec["ego_features"]
+    max_partner_objects = spec["max_partner_objects"]
+    max_road_objects = spec["max_road_objects"]
+    obs_range_sq = spec["obs_range_sq"]
     obs = np.zeros(
         (
             1,
-            EGO_FEATURES_CLASSIC
-            + MAX_PARTNER_OBJECTS * PARTNER_FEATURES
-            + MAX_ROAD_OBJECTS * ROAD_FEATURES,
+            ego_features
+            + max_partner_objects * PARTNER_FEATURES
+            + max_road_objects * ROAD_FEATURES,
         ),
         dtype=np.float32,
     )
@@ -588,8 +703,14 @@ def pufferdrive_observation_from_waymax(state: Any) -> np.ndarray:
     obs[0, 6] = 0.0  # respawn state: 0: no, 1: just respawned
     object_types = np.asarray(state.object_metadata.object_types)
     obs[0, 7] = float(object_types[ego_idx]) / 3.0
+    if spec["has_conditioning"]:
+        # selfplay_drive conditioning inputs (raw, un-normalized; see drive.h)
+        # Trailing 3 ego features: collision_factor, offroad_factor, lane_width
+        obs[0, ego_features - 3] = collision_factor
+        obs[0, ego_features - 2] = offroad_factor
+        obs[0, ego_features - 1] = lane_width
 
-    partner_start = EGO_FEATURES_CLASSIC
+    partner_start = ego_features
     partner_rows = []
     for idx in range(arrays["x"].shape[0]):
         if idx == ego_idx or not arrays["valid"][idx]:
@@ -600,7 +721,7 @@ def pufferdrive_observation_from_waymax(state: Any) -> np.ndarray:
         dx = float(arrays["x"][idx]) - ego_x
         dy = float(arrays["y"][idx]) - ego_y
         dist_sq = dx * dx + dy * dy
-        if dist_sq > 2500.0:
+        if dist_sq > obs_range_sq:
             continue
         rel_x = dx * ego_cos + dy * ego_sin
         rel_y = -dx * ego_sin + dy * ego_cos
@@ -630,7 +751,7 @@ def pufferdrive_observation_from_waymax(state: Any) -> np.ndarray:
             )
         )
     for slot, (_, row) in enumerate(
-        sorted(partner_rows, key=lambda item: item[0])[:MAX_PARTNER_OBJECTS]
+        sorted(partner_rows, key=lambda item: item[0])[:max_partner_objects]
     ):
         obs[
             0,
@@ -639,7 +760,7 @@ def pufferdrive_observation_from_waymax(state: Any) -> np.ndarray:
             + (slot + 1) * PARTNER_FEATURES,
         ] = row
 
-    road_start = partner_start + MAX_PARTNER_OBJECTS * PARTNER_FEATURES
+    road_start = partner_start + max_partner_objects * PARTNER_FEATURES
     rg = state.roadgraph_points
     xyz = np.asarray(rg.xyz)
     dirs = np.asarray(rg.dir_xyz)
@@ -654,7 +775,7 @@ def pufferdrive_observation_from_waymax(state: Any) -> np.ndarray:
         dx = float(mid[0]) - ego_x
         dy = float(mid[1]) - ego_y
         dist_sq = dx * dx + dy * dy
-        if dist_sq > 2500.0:
+        if dist_sq > obs_range_sq:
             continue
         direction = dirs[idx]
         direction_norm = float(np.linalg.norm(direction[:2]))
@@ -689,7 +810,7 @@ def pufferdrive_observation_from_waymax(state: Any) -> np.ndarray:
             )
         )
     for slot, (_, row) in enumerate(
-        sorted(segment_rows, key=lambda item: item[0])[:MAX_ROAD_OBJECTS]
+        sorted(segment_rows, key=lambda item: item[0])[:max_road_objects]
     ):
         obs[
             0,
@@ -734,10 +855,16 @@ def pufferdrive_action_to_waymax(action_value: Any, state: Any) -> Any:
 
 
 def pufferdrive_action(args: argparse.Namespace, state: Any, puffer_model: Any) -> Any:
-    """Run one PufferDrive policy step and return the resulting Waymax Action."""
+    """Run one puffer policy step and return the resulting Waymax Action."""
     if puffer_model is None:
-        raise UserInputError("--policy pufferdrive requires a loaded PufferDrive model")
-    obs = pufferdrive_observation_from_waymax(state)
+        raise UserInputError(f"--policy {args.policy} requires a loaded puffer model")
+    obs = pufferdrive_observation_from_waymax(
+        state,
+        POLICY_SPECS[args.policy],
+        collision_factor=args.collision_factor,
+        offroad_factor=args.offroad_factor,
+        lane_width=args.lane_width,
+    )
     viz_model_tool.add_input(obs) # TODO
     action_value = puffer_model.step(obs)
     viz_model_tool.add_output(action_value) # TODO
@@ -755,7 +882,7 @@ def select_action(
         return constant_speed_action(state, env, None)
     if args.policy == "zero":
         return zero_action(state, env)
-    if args.policy == "pufferdrive":
+    if args.policy in PUFFER_POLICIES:
         return pufferdrive_action(args, state, puffer_model)
     raise ValueError(f"Unsupported policy: {args.policy}")
 
@@ -944,7 +1071,7 @@ def run(args: argparse.Namespace) -> tuple[Any, dict[str, float]]:
     else:
         tfrecord, scenario = load_scenario(args)
     env = build_environment(args)
-    puffer_model = build_puffer_model(args) if args.policy == "pufferdrive" else None
+    puffer_model = build_puffer_model(args) if args.policy in PUFFER_POLICIES else None
     state, metric_summary, states, max_steps = rollout_scenario(
         args,
         env,
@@ -998,7 +1125,7 @@ def evaluate_all(args: argparse.Namespace) -> dict[str, Any]:
         raise UserInputError("--eval-all does not support --video")
 
     env = build_environment(args)
-    puffer_model = build_puffer_model(args) if args.policy == "pufferdrive" else None
+    puffer_model = build_puffer_model(args) if args.policy in PUFFER_POLICIES else None
     accumulator = MetricAccumulator()
     records = []
     scenario_count = 0

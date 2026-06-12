@@ -90,11 +90,11 @@
        // gridmap, diagonal poly-lines -> sqrt(2), include diagonal ends -> 2
 
 // Observation constants
-#define MAX_ROAD_SEGMENT_OBSERVATIONS 128
+#define MAX_ROAD_SEGMENT_OBSERVATIONS 512
 
 // Maximum number of agents per scene
 #ifndef MAX_AGENTS
-#define MAX_AGENTS 32
+#define MAX_AGENTS 64
 #endif
 #define STOP_AGENT 1
 #define REMOVE_AGENT 2
@@ -104,8 +104,9 @@
 #define PARTNER_FEATURES 7
 
 // Ego features depend on dynamics model
-#define EGO_FEATURES_CLASSIC 10
-#define EGO_FEATURES_JERK 13
+// Trailing 3 ego features are conditioning inputs: collision_factor, offroad_factor, lane_width
+#define EGO_FEATURES_CLASSIC 11
+#define EGO_FEATURES_JERK 14
 
 // Observation normalization constants
 #define MAX_SPEED 100.0f
@@ -126,6 +127,7 @@
 #define GOAL_RESPAWN 0
 #define GOAL_GENERATE_NEW 1
 #define GOAL_STOP 2
+#define GOAL_REMOVE 3
 
 // Offroad behavior
 #define OFFROAD_ROAD_EDGE 0
@@ -255,6 +257,7 @@ struct Entity {
     float wheelbase;
     float collision_factor;
     float offroad_factor;
+    float lane_width; // per-agent offroad tolerance (conditioning input)
 };
 
 void free_entity(Entity *entity) {
@@ -356,6 +359,9 @@ struct Drive {
     int condition_sample_mode;
     float fixed_collision_factor;
     float fixed_offroad_factor;
+    float lane_width_min;
+    float lane_width_max;
+    float fixed_lane_width;
     char *map_name;
     float world_mean_x;
     float world_mean_y;
@@ -1176,8 +1182,8 @@ void compute_agent_metrics(Drive *env, int agent_idx) {
         Entity *entity;
         entity = &env->entities[entity_list[i].entity_idx];
 
-        // Check for offroad collision with road edges (only for vehicles and cyclists)
-        if (env->offroad_mode == OFFROAD_ROAD_EDGE && entity->type == ROAD_EDGE && agent->type != PEDESTRIAN) {
+        // Check for offroad collision with road edges (only for vehicles; cyclists/pedestrians may go offroad)
+        if (env->offroad_mode == OFFROAD_ROAD_EDGE && entity->type == ROAD_EDGE && agent->type == VEHICLE) {
             int geometry_idx = entity_list[i].geometry_idx;
             float start[2] = {entity->traj_x[geometry_idx], entity->traj_y[geometry_idx]};
             float end[2] = {entity->traj_x[geometry_idx + 1], entity->traj_y[geometry_idx + 1]};
@@ -1226,8 +1232,8 @@ void compute_agent_metrics(Drive *env, int agent_idx) {
         }
     }
 
-    if (env->offroad_mode == OFFROAD_LANE_CENTER && agent->type != PEDESTRIAN) {
-        float lane_half_width = env->lane_width * 0.5f;
+    if (env->offroad_mode == OFFROAD_LANE_CENTER && agent->type == VEHICLE) {
+        float lane_half_width = agent->lane_width * 0.5f;
         if (closest_lane_entity_idx == -1 || min_lane_center_distance > lane_half_width) {
             collided = OFFROAD;
         }
@@ -1891,8 +1897,9 @@ void compute_observations(Drive *env) {
             obs[6] = (ego_entity->respawn_timestep != -1) ? 1 : 0;
             obs[7] = ego_entity->type / 3.0f;
         }
-        obs[ego_dim - 2] = ego_entity->collision_factor;
-        obs[ego_dim - 1] = ego_entity->offroad_factor;
+        obs[ego_dim - 3] = ego_entity->collision_factor;
+        obs[ego_dim - 2] = ego_entity->offroad_factor;
+        obs[ego_dim - 1] = ego_entity->lane_width;
 
         // Relative Pos of other cars
         int obs_idx = ego_dim;
@@ -1919,7 +1926,7 @@ void compute_observations(Drive *env) {
             float dx = other_entity->x - ego_entity->x;
             float dy = other_entity->y - ego_entity->y;
             float dist = (dx * dx + dy * dy);
-            if (dist > 2500.0f)
+            if (dist > 4096.0f) // 64m: cover the full 64x64 map
                 continue;
             // Rotate to ego vehicle's frame
             float rel_x = dx * cos_heading + dy * sin_heading;
@@ -2092,11 +2099,14 @@ void c_reset(Drive *env) {
         if (env->condition_sample_mode == CONDITION_FIXED) {
             env->entities[agent_idx].collision_factor = env->fixed_collision_factor;
             env->entities[agent_idx].offroad_factor = env->fixed_offroad_factor;
+            env->entities[agent_idx].lane_width = env->fixed_lane_width;
         } else {
             env->entities[agent_idx].collision_factor =
                 sample_open_interval(env->collision_factor_min, env->collision_factor_max);
             env->entities[agent_idx].offroad_factor =
                 sample_open_interval(env->offroad_factor_min, env->offroad_factor_max);
+            env->entities[agent_idx].lane_width =
+                sample_open_interval(env->lane_width_min, env->lane_width_max);
         }
 
         if (env->goal_behavior == GOAL_GENERATE_NEW) {
@@ -2214,6 +2224,13 @@ void c_step(Drive *env) {
                 env->logs[i].episode_return += env->reward_goal;
                 sample_new_goal(env, agent_idx);
                 env->entities[agent_idx].current_goal_reached = 0;
+                env->entities[agent_idx].goals_reached_this_episode += 1.0f;
+            } else if (env->goal_behavior == GOAL_REMOVE) { // Remove the agent from the scene at the goal
+                env->rewards[i] += env->reward_goal;
+                env->logs[i].episode_return += env->reward_goal;
+                env->entities[agent_idx].removed = 1;
+                env->entities[agent_idx].x = env->entities[agent_idx].y = -10000.0f;
+                env->entities[agent_idx].vx = env->entities[agent_idx].vy = 0.0f;
                 env->entities[agent_idx].goals_reached_this_episode += 1.0f;
             } else { // Zero out the velocity so that the agent stops at the goal
                 env->rewards[i] += env->reward_goal;

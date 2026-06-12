@@ -122,6 +122,7 @@
 #define GOAL_RESPAWN 0
 #define GOAL_GENERATE_NEW 1
 #define GOAL_STOP 2
+#define GOAL_REMOVE 3
 
 // Jerk action space (for JERK dynamics model)
 static const float JERK_LONG[4] = {-15.0f, -4.0f, 0.0f, 4.0f};
@@ -2164,6 +2165,13 @@ void c_step(Drive *env) {
                 env->logs[i].episode_return += env->reward_goal;
                 sample_new_goal(env, agent_idx);
                 env->entities[agent_idx].current_goal_reached = 0;
+                env->entities[agent_idx].goals_reached_this_episode += 1.0f;
+            } else if (env->goal_behavior == GOAL_REMOVE) { // Remove the agent from the scene at the goal
+                env->rewards[i] += env->reward_goal;
+                env->logs[i].episode_return += env->reward_goal;
+                env->entities[agent_idx].removed = 1;
+                env->entities[agent_idx].x = env->entities[agent_idx].y = -10000.0f;
+                env->entities[agent_idx].vx = env->entities[agent_idx].vy = 0.0f;
                 env->entities[agent_idx].goals_reached_this_episode += 1.0f;
             } else { // Zero out the velocity so that the agent stops at the goal
                 env->rewards[i] += env->reward_goal;

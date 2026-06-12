@@ -14,9 +14,12 @@ from matplotlib.patches import Circle, Polygon, Rectangle
 import numpy as np
 
 
-EGO_FEATURES_CLASSIC = 8
-MAX_PARTNER_OBJECTS = 31
-MAX_ROAD_OBJECTS = 128
+# Default obs layout = selfplay_drive (pacific): classic ego = 8 base + 3
+# conditioning features (collision_factor, offroad_factor, lane_width); used here
+# only as the partner/road offset. Overridden per-policy via VizPufferDrive.set_layout().
+EGO_FEATURES_CLASSIC = 11
+MAX_PARTNER_OBJECTS = 63
+MAX_ROAD_OBJECTS = 512
 PARTNER_FEATURES = 7
 ROAD_FEATURES = 7
 
@@ -59,6 +62,17 @@ class VizPufferDrive:
         self.output_data_buffer: List[Any] = []
         self.fps = fps
         self.dpi = dpi
+        # Observation layout used to slice the obs vector. Defaults to the
+        # selfplay_drive (pacific) layout; call set_layout() to switch policies.
+        self.ego_features = EGO_FEATURES_CLASSIC
+        self.max_partner_objects = MAX_PARTNER_OBJECTS
+        self.max_road_objects = MAX_ROAD_OBJECTS
+
+    def set_layout(self, ego_features: int, max_partner_objects: int, max_road_objects: int):
+        """Configure the obs layout (ego/partner/road counts) to match the active policy."""
+        self.ego_features = ego_features
+        self.max_partner_objects = max_partner_objects
+        self.max_road_objects = max_road_objects
 
     def add_input(self, input_data):
         self.input_data_buffer.append(np.asarray(input_data, dtype=np.float32).copy())
@@ -237,8 +251,8 @@ class VizPufferDrive:
             spine.set_color("#5f6368")
 
     def _draw_partners(self, ax, obs: np.ndarray) -> None:
-        start = EGO_FEATURES_CLASSIC
-        for idx in range(MAX_PARTNER_OBJECTS):
+        start = self.ego_features
+        for idx in range(self.max_partner_objects):
             row = obs[start + idx * PARTNER_FEATURES : start + (idx + 1) * PARTNER_FEATURES]
             if row.size < PARTNER_FEATURES or self._is_empty_position(row[0], row[1]):
                 continue
@@ -265,8 +279,8 @@ class VizPufferDrive:
             )
 
     def _draw_roads(self, ax, obs: np.ndarray) -> None:
-        start = EGO_FEATURES_CLASSIC + MAX_PARTNER_OBJECTS * PARTNER_FEATURES
-        for idx in range(MAX_ROAD_OBJECTS):
+        start = self.ego_features + self.max_partner_objects * PARTNER_FEATURES
+        for idx in range(self.max_road_objects):
             row = obs[start + idx * ROAD_FEATURES : start + (idx + 1) * ROAD_FEATURES]
             if row.size < ROAD_FEATURES or self._is_empty_position(row[0], row[1]):
                 continue
@@ -356,23 +370,23 @@ class VizPufferDrive:
                 )
 
     def _count_partners(self, obs: np.ndarray) -> int:
-        start = EGO_FEATURES_CLASSIC
+        start = self.ego_features
         return sum(
             not self._is_empty_position(
                 obs[start + idx * PARTNER_FEATURES],
                 obs[start + idx * PARTNER_FEATURES + 1],
             )
-            for idx in range(MAX_PARTNER_OBJECTS)
+            for idx in range(self.max_partner_objects)
         )
 
     def _count_roads(self, obs: np.ndarray) -> int:
-        start = EGO_FEATURES_CLASSIC + MAX_PARTNER_OBJECTS * PARTNER_FEATURES
+        start = self.ego_features + self.max_partner_objects * PARTNER_FEATURES
         return sum(
             not self._is_empty_position(
                 obs[start + idx * ROAD_FEATURES],
                 obs[start + idx * ROAD_FEATURES + 1],
             )
-            for idx in range(MAX_ROAD_OBJECTS)
+            for idx in range(self.max_road_objects)
         )
 
     def _is_empty_position(self, x: float, y: float) -> bool:

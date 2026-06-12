@@ -33,6 +33,9 @@ class Drive(pufferlib.PufferEnv):
         condition_sample_mode="random",
         fixed_collision_factor=1.0,
         fixed_offroad_factor=1.0,
+        lane_width_min=1.0,
+        lane_width_max=5.0,
+        fixed_lane_width=3.5,
         reward_goal=1.0,
         reward_goal_post_respawn=0.5,
         goal_behavior=0,
@@ -72,6 +75,9 @@ class Drive(pufferlib.PufferEnv):
         self.condition_sample_mode_str = condition_sample_mode
         self.fixed_collision_factor = fixed_collision_factor
         self.fixed_offroad_factor = fixed_offroad_factor
+        self.lane_width_min = lane_width_min
+        self.lane_width_max = lane_width_max
+        self.fixed_lane_width = fixed_lane_width
         self.reward_goal = reward_goal
         self.reward_goal_post_respawn = reward_goal_post_respawn
         self.goal_radius = goal_radius
@@ -234,6 +240,9 @@ class Drive(pufferlib.PufferEnv):
                 condition_sample_mode=self.condition_sample_mode,
                 fixed_collision_factor=fixed_collision_factor,
                 fixed_offroad_factor=fixed_offroad_factor,
+                lane_width_min=lane_width_min,
+                lane_width_max=lane_width_max,
+                fixed_lane_width=fixed_lane_width,
                 reward_goal=reward_goal,
                 reward_goal_post_respawn=reward_goal_post_respawn,
                 goal_radius=goal_radius,
@@ -308,6 +317,9 @@ class Drive(pufferlib.PufferEnv):
                 condition_sample_mode=self.condition_sample_mode,
                 fixed_collision_factor=self.fixed_collision_factor,
                 fixed_offroad_factor=self.fixed_offroad_factor,
+                lane_width_min=self.lane_width_min,
+                lane_width_max=self.lane_width_max,
+                fixed_lane_width=self.fixed_lane_width,
                 reward_goal=self.reward_goal,
                 reward_goal_post_respawn=self.reward_goal_post_respawn,
                 goal_radius=self.goal_radius,

@@ -18,6 +18,9 @@ typedef struct {
     int condition_sample_mode;
     float fixed_collision_factor;
     float fixed_offroad_factor;
+    float lane_width_min;
+    float lane_width_max;
+    float fixed_lane_width;
     float reward_goal;
     float reward_goal_post_respawn;
     float reward_vehicle_collision_post_respawn;
@@ -88,6 +91,12 @@ static int handler(void *config, const char *section, const char *name, const ch
         env_config->fixed_collision_factor = atof(value);
     } else if (MATCH("env", "fixed_offroad_factor")) {
         env_config->fixed_offroad_factor = atof(value);
+    } else if (MATCH("env", "lane_width_min")) {
+        env_config->lane_width_min = atof(value);
+    } else if (MATCH("env", "lane_width_max")) {
+        env_config->lane_width_max = atof(value);
+    } else if (MATCH("env", "fixed_lane_width")) {
+        env_config->fixed_lane_width = atof(value);
     } else if (MATCH("env", "reward_goal")) {
         env_config->reward_goal = atof(value);
     } else if (MATCH("env", "reward_goal_post_respawn")) {
