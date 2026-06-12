@@ -1,27 +1,31 @@
-"""dm_goal diffusion model as a DDPO ``SceneInitModel``.
+"""ldm_goal latent-diffusion model as a DDPO ``SceneInitModel``.
 
-Wraps the vendored ``DMGoal`` network (scenario-dreamer) and exposes it as a
-stochastic policy whose MDP is the DDPM ancestral-sampling chain:
+Wraps the vendored ``LDM`` (latent diffusion over autoencoder latents) plus the
+frozen ``AutoEncoder`` decoder, and exposes the pair as a stochastic policy whose
+MDP is the DDPM ancestral-sampling chain *in latent space*:
 
   * horizon  H = n_diffusion_timesteps (100)
-  * state    s_t = (noisy agent latents x_t, fixed conditioning graph)
-  * action   a_t = sampled x_{t-1}
+  * state    s_t = (noisy agent latents x_t, fixed lane-latent conditioning)
+  * action   a_t = sampled x_{t-1}  (agent latents only)
   * policy   pi_theta(a_t | s_t) = N( mean_theta(x_t, t),  Sigma_t )
              where mean_theta is the classifier-free-guided posterior mean and
              Sigma_t is the (fixed) DDPM posterior variance.
 
-Project-specific choices baked in here:
-  * mode = lane-conditioned: the lane/map chain is held to the real map every step,
-    so only the AGENT chain is stochastic -> the conditioning is the MAP ONLY
-    (lane geometry + per-scene agent count; the a2a/l2a edges are complete graphs,
-    so no real agent position leaks into the conditioning).
+Differences from the data-space dm_goal adapter (``scene_models/dm_goal.py``):
+  * the policy acts on *autoencoder latents* (agent_latent_dim, e.g. 8), not on
+    raw agent states; the decode step runs a FROZEN autoencoder decoder, so only
+    the LDM is optimised by DDPO and the log-prob lives entirely in latent space.
+  * the lane conditioning is the AE-encoded ``data['lane'].latents`` (already
+    normalised), held fixed every step (lane-conditioned mode), NOT raw geometry.
+  * lanes written to the simulator are the REAL map polylines carried on the
+    conditioning graph (``data['lane'].road_points``, physical units) — the map
+    is never generated/decoded (project decision).
+
+Project-specific choices baked in (shared with dm_goal):
   * ALL agents are generated, including the ego (local index 0 per scene) and its
-    goal. Nothing is inpainted from real agent data: the ego's initial state AND
-    target are produced by the policy, so the whole scene is part of the policy and
-    contributes to the log-prob. The reward still scores the slot-0 agent as the ego
-    (the dataset is SDC-centric, so slot 0 generates an ego-like agent near origin).
-  * the final step (t == 0) is deterministic (DDPM zeroes the noise) and is excluded
-    from the set of differentiable "policy steps".
+    goal; nothing is inpainted from real agent data.
+  * the final step (t == 0) is deterministic and excluded from the differentiable
+    policy steps.
 """
 
 from __future__ import annotations
@@ -34,7 +38,7 @@ import torch
 from torch_geometric.data import Batch
 
 from ..interfaces import GeneratedScenes, SamplingTrajectory, SceneInitModel
-from ..sd_model import DMGoal, unnormalize_scene_with_goal
+from ..sd_model_ldm import AutoEncoder, LDM, unnormalize_latents, unnormalize_scene_with_goal
 
 _LOG_2PI = math.log(2.0 * math.pi)
 
@@ -49,16 +53,25 @@ def _gaussian_logprob(x: torch.Tensor, mean: torch.Tensor, logvar: torch.Tensor)
     return per_elem.flatten(1).sum(dim=1)
 
 
-class DMGoalSceneInitModel(SceneInitModel):
-    def __init__(self, cfg, ckpt_path: str | None, device: str = "cuda", use_ema_weights: bool = True):
-        self.cfg = cfg
-        self.cfg_model = cfg.model
-        self.cfg_dataset = cfg.dataset
+class LdmGoalSceneInitModel(SceneInitModel):
+    def __init__(
+        self,
+        ldm_cfg,
+        ae_cfg,
+        ldm_ckpt: str | None,
+        ae_ckpt: str | None,
+        device: str = "cuda",
+        use_ema_weights: bool = True,
+    ):
+        self.cfg = ldm_cfg
+        self.cfg_model = ldm_cfg.model
+        self.cfg_dataset = ldm_cfg.dataset
         self.device = device
 
-        self.net = DMGoal(cfg).to(device)
-        if ckpt_path is not None:
-            self._load_checkpoint(ckpt_path, use_ema_weights)
+        # --- latent-diffusion policy network -----------------------------------
+        self.net = LDM(ldm_cfg).to(device)
+        if ldm_ckpt is not None:
+            self._load_ldm_checkpoint(ldm_ckpt, use_ema_weights)
         # Disable dropout / label-dropout on the policy: the only intended
         # stochasticity is the diffusion sampling noise, so the recomputed log-prob
         # must be deterministic (otherwise the IS ratio drifts from 1 on epoch 0).
@@ -70,46 +83,69 @@ class DMGoalSceneInitModel(SceneInitModel):
         for p in self.ref.parameters():
             p.requires_grad_(False)
 
+        # --- frozen autoencoder decoder (NOT part of the policy) ----------------
+        self.ae = AutoEncoder(ae_cfg.model).to(device).eval()
+        if ae_ckpt is not None:
+            self._load_ae_checkpoint(ae_ckpt)
+        for p in self.ae.parameters():
+            p.requires_grad_(False)
+
         self._H = int(self.net.n_timesteps)
         self.agent_latent_dim = self.cfg_model.agent_latent_dim
         self.lane_latent_dim = self.cfg_model.lane_latent_dim
         self.diffusion_clip = self.cfg_model.diffusion_clip
 
+        # latent normalisation stats (scalars), injected into the dumped ldm cfg
+        self.agent_latents_mean = self.cfg_dataset.agent_latents_mean
+        self.agent_latents_std = self.cfg_dataset.agent_latents_std
+        self.lane_latents_mean = self.cfg_dataset.lane_latents_mean
+        self.lane_latents_std = self.cfg_dataset.lane_latents_std
+
     # ------------------------------------------------------------------ load
-    def _load_checkpoint(self, ckpt_path: str, use_ema_weights: bool) -> None:
+    def _load_ldm_checkpoint(self, ckpt_path: str, use_ema_weights: bool) -> None:
+        """Load LDM weights from a scenario-dreamer Lightning checkpoint.
+
+        The LightningModule stores the diffusion network under ``diff_model.*`` and
+        persists the EMA shadow separately in ``ckpt['ema_state_dict']`` (ordered as
+        ``diff_model.parameters()``). Prefer EMA weights for sampling/eval.
+        """
         ckpt = torch.load(ckpt_path, map_location=self.device, weights_only=False)
         sd = ckpt.get("state_dict", ckpt)
 
-        # Lightning module stores the network params under ``diff_model.*`` in the
-        # state_dict. The EMA (torch_ema.ExponentialMovingAverage) is a plain object,
-        # not an nn.Module, so it is NOT in state_dict; the LightningModule persists
-        # it separately via on_save_checkpoint -> ckpt["ema_state_dict"], whose
-        # ``shadow_params`` list is ordered as diff_model.parameters(). Prefer EMA
-        # weights (used for sampling/eval).
         net_sd = {k[len("diff_model.") :]: v for k, v in sd.items() if k.startswith("diff_model.")}
         missing, unexpected = self.net.load_state_dict(net_sd, strict=False)
         if missing:
-            print(f"[dm_goal] {len(missing)} missing keys on load (e.g. {missing[:3]})")
+            print(f"[ldm_goal] {len(missing)} missing keys on LDM load (e.g. {missing[:3]})")
         if use_ema_weights:
             ema_sd = ckpt.get("ema_state_dict", {})
             shadow = ema_sd.get("shadow_params", [])
-            # Fallback: some exports flatten the EMA shadow into the state_dict.
             if not shadow:
                 shadow = [v for k, v in sd.items() if k.startswith("ema.shadow_params")]
-            # The EMA was built from diff_model.parameters() (ALL params, incl. the
-            # frozen sincos pos-embeddings), so match against every param in order,
-            # not just the trainable ones.
             params = list(self.net.parameters())
             if len(shadow) == len(params) and len(shadow) > 0:
                 with torch.no_grad():
                     for p, s in zip(params, shadow):
                         p.copy_(s.to(p.device))
-                print(f"[dm_goal] loaded {len(shadow)} EMA shadow params into net")
+                print(f"[ldm_goal] loaded {len(shadow)} EMA shadow params into LDM")
             else:
                 print(
-                    f"[dm_goal] EMA shadow not found/mismatched "
-                    f"(shadow={len(shadow)}, params={len(params)}); using raw weights"
+                    f"[ldm_goal] EMA shadow not found/mismatched "
+                    f"(shadow={len(shadow)}, params={len(params)}); using raw LDM weights"
                 )
+
+    def _load_ae_checkpoint(self, ckpt_path: str) -> None:
+        """Load autoencoder weights from a scenario-dreamer Lightning checkpoint.
+
+        ``ScenarioDreamerAutoEncoder`` stores the network under ``model.*``.
+        """
+        ckpt = torch.load(ckpt_path, map_location=self.device, weights_only=False)
+        sd = ckpt.get("state_dict", ckpt)
+        ae_sd = {k[len("model.") :]: v for k, v in sd.items() if k.startswith("model.")}
+        missing, unexpected = self.ae.load_state_dict(ae_sd, strict=False)
+        if missing:
+            print(f"[ldm_goal] {len(missing)} missing keys on AE load (e.g. {missing[:3]})")
+        if unexpected:
+            print(f"[ldm_goal] {len(unexpected)} unexpected keys on AE load (e.g. {unexpected[:3]})")
 
     # ------------------------------------------------------------ properties
     @property
@@ -125,6 +161,11 @@ class DMGoalSceneInitModel(SceneInitModel):
     def load_state_dict(self, sd: dict) -> None:
         self.net.load_state_dict(sd)
 
+    # ----------------------------------------------------------- conditioning
+    def _lane_latents(self, data: Batch) -> torch.Tensor:
+        """Fixed lane-latent conditioning, shape [n_lane, 1, lane_latent_dim]."""
+        return data["lane"].latents.float().to(self.device).unsqueeze(1)
+
     # ---------------------------------------------------------------- sample
     @torch.no_grad()
     def sample(self, conditioning: Batch) -> tuple[GeneratedScenes, SamplingTrajectory]:
@@ -137,10 +178,10 @@ class DMGoalSceneInitModel(SceneInitModel):
         n_agent = data["agent"].x.shape[0]
         x_agent = torch.randn((n_agent, 1, self.agent_latent_dim), device=self.device)
 
-        # Map-only conditioning: the lane/map chain is held to the real map every
-        # step; every agent (incl. ego and its goal) is generated from noise.
-        target_lane = net._lane_target(data).to(self.device)
-        x_lane = target_lane                       # lane chain fully fixed
+        # Lane-conditioned: the lane latents are held to the real (encoded) map every
+        # step; every agent latent (incl. ego and its goal) is generated from noise.
+        x_lane = self._lane_latents(data)
+        target_lane = x_lane
 
         records = []  # (x_t, x_tm1, t_value) per step; agents only
         old_lp = torch.zeros((num_scenes, self._H), device=self.device)
@@ -159,7 +200,7 @@ class DMGoalSceneInitModel(SceneInitModel):
                 x_next = mean_a  # deterministic final step
 
             x_next = torch.clip(x_next, -self.diffusion_clip, self.diffusion_clip)
-            x_lane = target_lane
+            x_lane = target_lane  # lane chain fully fixed
 
             # per-scene log-prob of the action over ALL agents under N(mean, var)
             if i > 0:
@@ -191,9 +232,8 @@ class DMGoalSceneInitModel(SceneInitModel):
         net = self.ref if use_reference else self.net
         steps = trajectory.records["steps"]
         agent_batch = trajectory.records["agent_batch"]
-        lane_batch = trajectory.records["lane_batch"]
         num_scenes = trajectory.num_scenes
-        target_lane = self.net._lane_target(data).to(self.device)
+        target_lane = self._lane_latents(data)
 
         out = torch.zeros((num_scenes, len(step_indices)), device=self.device)
         ctx = torch.no_grad() if use_reference else torch.enable_grad()
@@ -204,7 +244,7 @@ class DMGoalSceneInitModel(SceneInitModel):
                     continue  # deterministic step carries no policy gradient
                 t = torch.full((num_scenes,), i, device=self.device, dtype=torch.long)
                 mean_a, logvar_a, _, _ = net.p_mean_variance(
-                    x_t, target_lane, data, t[agent_batch], t[lane_batch]
+                    x_t, target_lane, data, t[agent_batch], t[trajectory.records["lane_batch"]]
                 )
                 node_lp = _gaussian_logprob(x_tm1, mean_a, logvar_a)
                 out[:, col] = out[:, col].index_add(0, agent_batch, node_lp)
@@ -213,19 +253,33 @@ class DMGoalSceneInitModel(SceneInitModel):
     # ----------------------------------------------------------- decode
     @torch.no_grad()
     def _decode(self, x_agent, x_lane, data) -> GeneratedScenes:
-        agent_states, lane_states, agent_types, _, _ = self.net.decode_outputs(
-            x_agent[:, 0], x_lane, data
+        # latent space -> raw AE latents
+        agent_latents, lane_latents = unnormalize_latents(
+            x_agent[:, 0],
+            x_lane[:, 0],
+            self.agent_latents_mean,
+            self.agent_latents_std,
+            self.lane_latents_mean,
+            self.lane_latents_std,
         )
-        agent_states, lane_states = unnormalize_scene_with_goal(
-            agent_states, lane_states, self.cfg_dataset
+        # raw AE latents -> normalised scene
+        agent_states, _lane_states, agent_types, _, _ = self.ae.forward_decoder(
+            agent_latents, lane_latents, data
         )
+        # normalised scene -> physical units (incl. goal at indices 7, 8)
+        agent_states, _ = unnormalize_scene_with_goal(
+            agent_states, _lane_states, self.cfg_dataset
+        )
+
+        # Lanes are the REAL map polylines carried on the conditioning graph
+        # (physical units, attached at dump time), NOT decoded from latents.
+        lane_polylines = data["lane"].road_points
+
         return GeneratedScenes(
             agent_states=agent_states,
             agent_types=agent_types,
             agent_scene_idx=data["agent"].batch,
-            lane_polylines=lane_states,
+            lane_polylines=lane_polylines,
             num_scenes=int(data.batch_size),
-            # lane->scene map so scene_codec writes each scene's own lanes (a batch
-            # mixes distinct maps); without it every bin would get all scenes' lanes.
             meta={"lane_scene_idx": data["lane"].batch},
         )

@@ -26,18 +26,24 @@ The denoising chain is the MDP (Black et al. 2023):
 | MDP piece | dm_goal |
 |---|---|
 | horizon H | `n_diffusion_timesteps` = 100 |
-| state `s_t` | noisy agent latents `x_t` + fixed conditioning graph |
-| action `a_t` | sampled `x_{t-1}` |
+| state `s_t` | noisy agent latents `x_t` + fixed map conditioning (lanes + counts) |
+| action `a_t` | sampled `x_{t-1}` (all agents, incl. ego + goal) |
 | policy `π_θ` | `N(guided_posterior_mean_θ(x_t,t), Σ_t)`, `Σ_t` fixed |
-| reward | ego collision over a frozen-planner rollout |
+| reward | slot-0 (ego) collision over a frozen-planner rollout |
 
 Project decisions baked in:
-- **Lane/map chain is fixed** (lane-conditioned mode) → policy only acts on agents.
-- **Ego = local index 0 per scene is held fixed** via inpainting every step → DDPO
-  only perturbs the *other* agents to be adversarial; ego never enters the policy.
-- **Only the ego is scored.** Reward = `+1` if the planner makes the ego collide,
-  `-1` if the scene is degenerate (ego already overlapping at t=0, i.e. reward
-  hacking), else `0`. See `reward.default_reward_fn`.
+- **Lane/map chain is fixed** (lane-conditioned mode) → the conditioning is the
+  **map only** (lane geometry + per-scene agent count; a2a/l2a edges are complete
+  graphs, so no real agent position leaks in). The policy acts on agents.
+- **All agents are generated, including the ego** (local index 0 per scene) and its
+  goal. Nothing is inpainted from real agent data — the ego's initial state *and*
+  target are produced by the policy, so the whole scene enters the policy/log-prob.
+- **The slot-0 agent is scored as the ego.** The dataset is SDC-centric, so slot 0
+  generates an ego-like agent near origin. Reward = `+1` if the planner makes that
+  ego collide, `-1` if the scene is degenerate (ego already overlapping at t=0, i.e.
+  reward hacking), else `0`. See `reward.default_reward_fn`. Because the ego is now
+  generated, the `init_invalid` penalty and KL-to-base are the main guards against
+  the policy reward-hacking by spawning a doomed ego.
 - **Random-k step gradient**: each update differentiates through only `k≈8` of the
   ~100 denoising steps (the rest of the trajectory is replayed from records) to
   keep the backward pass affordable. The deterministic final step (t=0) is excluded.
@@ -47,7 +53,7 @@ Project decisions baked in:
 ## Data flow per iteration
 
 ```
-ConditioningPool.sample_batch(B)                 # real maps + real ego (HeteroData)
+ConditioningPool.sample_batch(B)                 # real maps only (HeteroData; agent vals unused)
         │
 DMGoalSceneInitModel.sample(cond)                # record denoising trajectory + old_logprob
         │  → GeneratedScenes (agents+goals, physical units) + SamplingTrajectory

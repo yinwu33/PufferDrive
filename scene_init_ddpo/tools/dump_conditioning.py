@@ -42,10 +42,14 @@ def main():
         cfg = compose(config_name=args.config_name)
 
     # Resolved dm_goal config consumed by the vendored DMGoal on the PufferDrive side.
-    OmegaConf.save(cfg.dm_goal, args.out / "model_cfg.yaml")
+    # Resolve interpolations now (while the full cfg root is available); cfg.dm_goal's
+    # values reference absolute paths like ${dm_goal.dataset.*} that would not resolve
+    # once the node is saved standalone.
+    resolved_dm_goal = OmegaConf.create(OmegaConf.to_container(cfg.dm_goal, resolve=True))
+    OmegaConf.save(resolved_dm_goal, args.out / "model_cfg.yaml")
 
     datamodule = instantiate(cfg.dm_goal.datamodule, dataset_cfg=cfg.dm_goal.dataset)
-    datamodule.setup()
+    datamodule.setup(stage="fit")
     dataset = datamodule.val_dataset if args.split == "val" else datamodule.train_dataset
 
     n = min(args.num_scenes, len(dataset))

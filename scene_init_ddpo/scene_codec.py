@@ -110,6 +110,22 @@ def _write_one(objects: list[dict], roads: list[dict], out_file: Path, map_id: i
             f.write(struct.pack("i", 0))
 
 
+def ego_goals(scenes) -> np.ndarray:
+    """Per-scene ego goal (x, y) in the scene frame, ``[num_scenes, 2]``.
+
+    Ego is the first agent (local index 0) of each scene; its goal is at agent-state
+    indices 7:9 (dm_goal). Used to window the reward to the pre-goal rollout.
+    """
+    states = scenes.agent_states.detach().cpu().numpy()
+    sidx = scenes.agent_scene_idx.detach().cpu().numpy()
+    goals = np.full((scenes.num_scenes, 2), np.nan, dtype=np.float32)
+    for s in range(scenes.num_scenes):
+        rows = np.nonzero(sidx == s)[0]
+        if len(rows):
+            goals[s] = states[rows[0], 7:9]
+    return goals
+
+
 def write_scene_bins(scenes, out_dir: str | Path) -> int:
     """Write one ``map_XXX.bin`` per generated scene. Returns the number written.
 

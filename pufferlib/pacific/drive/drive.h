@@ -1779,7 +1779,7 @@ static inline int is_in_track_to_predicts(Drive *env, int agent_idx) {
 }
 
 void c_get_global_agent_state(Drive *env, float *x_out, float *y_out, float *z_out, float *heading_out, int *id_out,
-                              float *length_out, float *width_out) {
+                              float *length_out, float *width_out, int *respawn_out) {
     for (int i = 0; i < env->active_agent_count; i++) {
         int agent_idx = env->active_agent_indices[i];
         Entity *agent = &env->entities[agent_idx];
@@ -1792,6 +1792,12 @@ void c_get_global_agent_state(Drive *env, float *x_out, float *y_out, float *z_o
         id_out[i] = agent->id;
         length_out[i] = agent->length;
         width_out[i] = agent->width;
+        // 1 once the agent has reached its goal and been teleported back to its
+        // t=0 spawn pose (GOAL_RESPAWN). The sim excludes such agents from
+        // collision_check (drive.h: respawn_timestep != -1), so downstream
+        // collision metrics must ignore them too to avoid scoring the
+        // respawn-teleport overlap as a real collision.
+        respawn_out[i] = (agent->respawn_timestep != -1) ? 1 : 0;
     }
 }
 

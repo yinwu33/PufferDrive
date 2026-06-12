@@ -376,8 +376,11 @@ class Drive(pufferlib.PufferEnv):
         """Get current global state of all active agents.
 
         Returns:
-            dict with keys 'x', 'y', 'z', 'heading', 'id', 'length', 'width' containing numpy arrays
-            of shape (num_active_agents,)
+            dict with keys 'x', 'y', 'z', 'heading', 'id', 'length', 'width', 'respawn'
+            containing numpy arrays of shape (num_active_agents,). 'respawn' is 1 for
+            agents that have reached their goal and been teleported back to their t=0
+            spawn pose (GOAL_RESPAWN); the sim excludes these from collision checks, so
+            downstream collision metrics should ignore them too.
         """
         num_agents = self.num_agents
 
@@ -389,6 +392,7 @@ class Drive(pufferlib.PufferEnv):
             "id": np.zeros(num_agents, dtype=np.int32),
             "length": np.zeros(num_agents, dtype=np.float32),
             "width": np.zeros(num_agents, dtype=np.float32),
+            "respawn": np.zeros(num_agents, dtype=np.int32),
         }
 
         binding.vec_get_global_agent_state(
@@ -400,6 +404,7 @@ class Drive(pufferlib.PufferEnv):
             states["id"],
             states["length"],
             states["width"],
+            states["respawn"],
         )
 
         return states

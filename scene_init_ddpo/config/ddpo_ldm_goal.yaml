@@ -1,14 +1,22 @@
-# DDPO config for the dm_goal scene-init model.
-# Fill in the four *_ckpt / pool / cfg paths before running.
+# DDPO config for the ldm_goal latent-diffusion scene-init model.
+# Fill in the ckpt / pool / cfg paths before running.
+#
+# The policy is the LDM denoising chain in autoencoder-latent space; a FROZEN
+# autoencoder decoder turns sampled latents into physical scenes for the reward.
+# Conditioning graphs (incl. lane latents + real lane polylines) and the two model
+# configs are produced offline by tools/dump_conditioning_ldm.py.
 
 device: cuda
 seed: 0
+model_type: ldm_goal        # selects LdmGoalSceneInitModel in train.build_model
 
 # --- artifacts (produced offline / pretrained) --------------------------------
-model_ckpt: /home/tjhu78u/workspace/scenario-dreamer/data/checkpoints/scenario_dreamer_dm_goal_train/last.ckpt
-model_cfg: scene_init_ddpo/data/cond_pool/model_cfg.yaml   # dumped by tools/dump_conditioning.py
-conditioning_pool: scene_init_ddpo/data/cond_pool          # dir of dumped HeteroData graphs
-planner_ckpt: experiments/selfplay_drive_178059638260.pt  # frozen PufferDrive planner
+ldm_ckpt: /home/tjhu78u/workspace/scenario-dreamer/data/checkpoints/scenario_dreamer_ldm_goal_waymo/last.ckpt
+ae_ckpt: /home/tjhu78u/workspace/scenario-dreamer/data/checkpoints/scenario_dreamer_ae_goal_waymo/last.ckpt
+ldm_model_cfg: scene_init_ddpo/data/cond_pool_ldm/ldm_model_cfg.yaml   # dumped by tools/dump_conditioning_ldm.py
+ae_model_cfg: scene_init_ddpo/data/cond_pool_ldm/ae_model_cfg.yaml     # dumped by tools/dump_conditioning_ldm.py
+conditioning_pool: scene_init_ddpo/data/cond_pool_ldm                  # dir of dumped HeteroData graphs
+planner_ckpt: experiments/selfplay_drive_178059638260.pt              # frozen PufferDrive planner
 use_ema_weights: true
 
 # --- rollout / reward ---------------------------------------------------------
@@ -25,17 +33,17 @@ lr: 1e-5
 weight_decay: 1e-4
 grad_clip: 1.0
 save_every: 100
-output_dir: experiments/scene_init_ddpo
+output_dir: experiments/scene_init_ddpo_ldm
 
 # --- logging / eval -----------------------------------------------------------
 wandb:
   enabled: true
   project: scene_init_ddpo
   entity: null               # null -> default wandb entity
-  run_name: ddpo_dm_goal
+  run_name: ddpo_ldm_goal
 eval_every: 50               # run the val viz pass every N iterations (0 disables)
 eval_num_scenes: 4           # number of val scenes to roll out + visualise
-eval_pool: scene_init_ddpo/data/cond_pool_val_eval   # held-out val maps for viz
+eval_pool: scene_init_ddpo/data/cond_pool_ldm_val_eval   # held-out val maps for viz
 save_gif: true              # true -> log per-step rollout GIFs; false -> static images
 gif_fps: 10                  # GIF playback speed (frames/sec)
 gif_max_frames: 90           # cap frames per GIF (subsamples longer episodes)

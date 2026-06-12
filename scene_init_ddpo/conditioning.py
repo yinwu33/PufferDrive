@@ -1,4 +1,4 @@
-"""Conditioning pool: real maps + real ego used to condition scene generation.
+"""Conditioning pool: real maps used to condition scene generation.
 
 The DiT needs a full heterogeneous conditioning graph per scene (``condition``,
 ``lg_type``, ``map_id``, lane/agent nodes, the three edge sets, ...). Rather than
@@ -13,15 +13,30 @@ Each conditioning graph must already carry everything ``DiT.forward`` reads:
     data['agent'].x / .type, data['lane'].x,
     ('lane','to','lane').edge_index, ('agent','to','agent').edge_index,
     ('lane','to','agent').edge_index
-plus, for ego inpainting, valid physical ego state at agent local index 0.
+Only the map (lane geometry + lane edges) and the per-scene agent COUNT are used;
+the real agent state values (``agent.x``) are ignored — every agent, including the
+ego and its goal, is generated from noise (see ``scene_models/dm_goal.py``).
 """
 
 from __future__ import annotations
 
+import sys
+import types
 from pathlib import Path
 
 import torch
 from torch_geometric.data import Batch
+
+# The conditioning graphs are ``ScenarioDreamerData`` instances pickled in the
+# scenario-dreamer venv under the module path ``utils.data_container``. That class
+# is vendored here identically (sd_model/data_container.py); alias the original
+# module path into sys.modules so torch.load can resolve the pickled class without
+# scenario-dreamer on the path.
+from .sd_model import data_container as _sd_data_container
+
+if "utils" not in sys.modules:
+    sys.modules["utils"] = types.ModuleType("utils")
+sys.modules.setdefault("utils.data_container", _sd_data_container)
 
 
 class ConditioningPool:
@@ -46,6 +61,10 @@ class ConditioningPool:
         """Random batch of conditioning scenes (with replacement)."""
         idx = torch.randint(0, len(self.graphs), (batch_size,), generator=self.g).tolist()
         return self._collate([self.graphs[i] for i in idx])
+
+    def batch_from_indices(self, indices) -> Batch:
+        """Deterministic batch of specific pool entries (for stable eval visuals)."""
+        return self._collate([self.graphs[i] for i in indices])
 
     def iter_epoch(self, batch_size: int):
         """Iterate the pool once in fixed-size batches (drops the remainder)."""

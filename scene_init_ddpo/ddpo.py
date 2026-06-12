@@ -28,12 +28,13 @@ class DDPOConfig:
     kl_coef: float = 0.0           # weight of KL-to-base penalty (set >0 to enable)
     adv_clip: float = 5.0          # clip normalised advantages to +/- this
     adv_eps: float = 1e-6
+    logratio_clip: float = 20.0    # clamp before exp() to avoid inf * 0 -> nan
 
 
 def compute_advantages(rewards: torch.Tensor, cfg: DDPOConfig) -> torch.Tensor:
     """Per-scene whitened advantages from per-scene rewards. Shape [num_scenes]."""
-    r = rewards.float()
-    adv = (r - r.mean()) / (r.std() + cfg.adv_eps)
+    r = torch.nan_to_num(rewards.float(), nan=0.0, posinf=0.0, neginf=0.0)
+    adv = (r - r.mean()) / (r.std(unbiased=False) + cfg.adv_eps)
     return adv.clamp(-cfg.adv_clip, cfg.adv_clip)
 
 
@@ -44,13 +45,17 @@ def ddpo_loss(
     cfg: DDPOConfig,
     ref_logprob: torch.Tensor | None = None,  # [num_scenes, k] (detached)
 ) -> tuple[torch.Tensor, dict]:
-    adv = advantages.unsqueeze(1)  # [num_scenes, 1] broadcast over steps
+    new_logprob = torch.nan_to_num(new_logprob, nan=0.0, posinf=0.0, neginf=0.0)
+    old_logprob = torch.nan_to_num(old_logprob, nan=0.0, posinf=0.0, neginf=0.0)
+    adv = torch.nan_to_num(advantages, nan=0.0, posinf=0.0, neginf=0.0).unsqueeze(1)
 
     if cfg.estimator == "sf":
         pg = -(adv * new_logprob).mean()
         ratio_mean = 1.0
     elif cfg.estimator == "is":
         logratio = new_logprob - old_logprob
+        logratio = torch.nan_to_num(logratio, nan=0.0, posinf=0.0, neginf=0.0)
+        logratio = logratio.clamp(-cfg.logratio_clip, cfg.logratio_clip)
         ratio = logratio.exp()
         unclipped = ratio * adv
         clipped = ratio.clamp(1.0 - cfg.clip_range, 1.0 + cfg.clip_range) * adv
@@ -63,7 +68,9 @@ def ddpo_loss(
     loss = pg
 
     if cfg.kl_coef > 0.0 and ref_logprob is not None:
-        kl = (new_logprob - ref_logprob).mean()
+        ref_logprob = torch.nan_to_num(ref_logprob, nan=0.0, posinf=0.0, neginf=0.0)
+        kl_terms = torch.nan_to_num(new_logprob - ref_logprob, nan=0.0, posinf=0.0, neginf=0.0)
+        kl = kl_terms.mean()
         loss = loss + cfg.kl_coef * kl
         metrics["kl_to_base"] = kl.item()
 

@@ -241,5 +241,4 @@ no-build-isolation-package = ["torch"]
 
 [tool.uv.workspace]
 members = [
-    "waymax_interface",
 ]
