@@ -233,6 +233,8 @@ static int my_init(Env *env, PyObject *args, PyObject *kwargs) {
     OVERRIDE_FLOAT(fixed_lane_width);
     OVERRIDE_FLOAT(reward_goal);
     OVERRIDE_FLOAT(reward_goal_post_respawn);
+    OVERRIDE_FLOAT(reward_steer_jitter);
+    OVERRIDE_FLOAT(reward_time_penalty);
     OVERRIDE_INT(collision_behavior);
     OVERRIDE_INT(offroad_behavior);
     OVERRIDE_INT(offroad_mode);
@@ -264,6 +266,8 @@ static int my_init(Env *env, PyObject *args, PyObject *kwargs) {
     env->fixed_lane_width = conf.fixed_lane_width > 0.0f ? conf.fixed_lane_width : 3.5f;
     env->reward_goal = conf.reward_goal;
     env->reward_goal_post_respawn = conf.reward_goal_post_respawn;
+    env->reward_steer_jitter = conf.reward_steer_jitter;
+    env->reward_time_penalty = conf.reward_time_penalty;
     env->episode_length = conf.episode_length;
     env->termination_mode = conf.termination_mode;
     env->collision_behavior = conf.collision_behavior;

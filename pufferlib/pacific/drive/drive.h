@@ -226,6 +226,7 @@ struct Entity {
     float init_goal_y;
     int mark_as_expert;
     int collision_state;
+    int prev_collision_state; // collision_state from previous step; used for rising-edge collision/offroad penalty
     float metrics_array[5]; // metrics_array: [collision, offroad, reached_goal, lane_aligned
     float x;
     float y;
@@ -368,6 +369,8 @@ struct Drive {
     float dt;
     float reward_goal;
     float reward_goal_post_respawn;
+    float reward_steer_jitter;
+    float reward_time_penalty;
     float goal_radius;
     float goal_speed;
     int logs_capacity;
@@ -556,6 +559,7 @@ void set_start_position(Drive *env) {
         e->heading_y = sinf(e->heading);
         e->valid = e->traj_valid[env->init_steps];
         e->collision_state = 0;
+        e->prev_collision_state = 0;
         e->metrics_array[COLLISION_IDX] = 0.0f;    // vehicle collision
         e->metrics_array[OFFROAD_IDX] = 0.0f;      // offroad
         e->metrics_array[REACHED_GOAL_IDX] = 0.0f; // reached goal
@@ -1663,6 +1667,19 @@ void move_dynamics(Drive *env, int action_idx, int agent_idx) {
         agent->heading_y = sinf(heading);
         agent->vx = new_vx;
         agent->vy = new_vy;
+
+        // Left-right jitter penalty: penalize change in steering between steps,
+        // doubled on a left<->right reversal (allows sustained turns, punishes oscillation).
+        if (env->reward_steer_jitter > 0.0f) {
+            float prev_steering = agent->steering_angle;
+            float dsteer = steering - prev_steering;
+            float jitter_penalty = -env->reward_steer_jitter * fabsf(dsteer);
+            if (steering * prev_steering < 0.0f)
+                jitter_penalty *= 2.0f;
+            env->rewards[action_idx] += jitter_penalty;
+            env->logs[action_idx].episode_return += jitter_penalty;
+        }
+        agent->steering_angle = steering; // store for next-step jitter comparison
     } else {
         // JERK dynamics model
         // Extract action components
@@ -2096,6 +2113,7 @@ void c_reset(Drive *env) {
         // Initialize to 1 because there is one goal in the data file
         env->entities[agent_idx].goals_sampled_this_episode = 1.0f;
         env->entities[agent_idx].current_goal_reached = 0;
+        env->entities[agent_idx].prev_collision_state = 0;
         env->entities[agent_idx].metrics_array[COLLISION_IDX] = 0.0f;
         env->entities[agent_idx].metrics_array[OFFROAD_IDX] = 0.0f;
         env->entities[agent_idx].metrics_array[REACHED_GOAL_IDX] = 0.0f;
@@ -2140,6 +2158,7 @@ void respawn_agent(Drive *env, int agent_idx) {
 
     env->entities[agent_idx].respawn_timestep = env->timestep;
     env->entities[agent_idx].collided_before_goal = 0;
+    env->entities[agent_idx].prev_collision_state = 0;
     env->entities[agent_idx].stopped = 0;
     env->entities[agent_idx].removed = 0;
     env->entities[agent_idx].a_long = 0.0f;
@@ -2181,6 +2200,14 @@ void c_step(Drive *env) {
             env->rewards[i] += jerk_penalty;
             env->logs[i].episode_return += jerk_penalty;
         }
+
+        // Small per-step time penalty: encourages reaching the goal sooner.
+        // Skipped once the agent has reached its goal (removed/stopped) so it cleanly rewards early arrival.
+        if (env->reward_time_penalty > 0.0f && !env->entities[agent_idx].removed &&
+            !env->entities[agent_idx].stopped) {
+            env->rewards[i] -= env->reward_time_penalty;
+            env->logs[i].episode_return -= env->reward_time_penalty;
+        }
     }
 
     // Compute rewards
@@ -2192,16 +2219,24 @@ void c_step(Drive *env) {
         int collision_state = env->entities[agent_idx].collision_state;
 
         if (collision_state > 0) {
+            // Rising-edge penalty: only charge -factor on the frame the agent ENTERS a
+            // collision/offroad state, not every frame it stays overlapping. A new event
+            // (leave then re-enter) is charged again. Logging stays per-frame as before.
+            int prev_collision_state = env->entities[agent_idx].prev_collision_state;
             if (collision_state == VEHICLE_COLLISION) {
-                float collision_reward = -env->entities[agent_idx].collision_factor;
-                env->rewards[i] += collision_reward;
-                env->logs[i].episode_return += collision_reward;
+                if (prev_collision_state != VEHICLE_COLLISION) {
+                    float collision_reward = -env->entities[agent_idx].collision_factor;
+                    env->rewards[i] += collision_reward;
+                    env->logs[i].episode_return += collision_reward;
+                }
                 env->logs[i].collision_rate = 1.0f;
                 env->logs[i].collisions_per_agent += 1.0f;
             } else if (collision_state == OFFROAD) {
-                float offroad_reward = -env->entities[agent_idx].offroad_factor;
-                env->rewards[i] += offroad_reward;
-                env->logs[i].episode_return += offroad_reward;
+                if (prev_collision_state != OFFROAD) {
+                    float offroad_reward = -env->entities[agent_idx].offroad_factor;
+                    env->rewards[i] += offroad_reward;
+                    env->logs[i].episode_return += offroad_reward;
+                }
                 env->logs[i].offroad_rate = 1.0f;
                 env->logs[i].offroad_per_agent += 1.0f;
             }
@@ -2251,6 +2286,9 @@ void c_step(Drive *env) {
 
         int lane_aligned = env->entities[agent_idx].metrics_array[LANE_ALIGNED_IDX];
         env->logs[i].lane_alignment_rate = lane_aligned;
+
+        // Remember this step's collision_state so the next step can detect a rising edge.
+        env->entities[agent_idx].prev_collision_state = collision_state;
     }
 
     if (env->goal_behavior == GOAL_RESPAWN) {

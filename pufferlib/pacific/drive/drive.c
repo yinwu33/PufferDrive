@@ -67,6 +67,8 @@ int demo(const char *map_name, const char *policy_name, int show_grid, int obs_o
         .fixed_offroad_factor = conf.fixed_offroad_factor,
         .reward_goal = conf.reward_goal,
         .reward_goal_post_respawn = conf.reward_goal_post_respawn,
+        .reward_steer_jitter = conf.reward_steer_jitter,
+        .reward_time_penalty = conf.reward_time_penalty,
         .goal_radius = conf.goal_radius,
         .goal_behavior = conf.goal_behavior,
         .goal_target_distance = conf.goal_target_distance,
