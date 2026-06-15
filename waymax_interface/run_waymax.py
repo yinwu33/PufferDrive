@@ -90,8 +90,8 @@ POLICY_SPECS: dict[str, dict[str, Any]] = {
         "default_model": (
             REPO_ROOT
             / "experiments"
-            / "selfplay_drive_178121292262"
-            / "model_selfplay_drive_009000.pt"
+            / "selfplay_drive_178125169286"
+            / "model_selfplay_drive_001000.pt"
         ),
         "model_glob": "*selfplay_drive*.pt",
         "ego_features": 11,
@@ -228,7 +228,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "are different models with different observation layouts.",
     )
     parser.add_argument(
-        "--puffer-model",
+        "--load-model-path",
         type=str,
         default=None,
         help="Checkpoint path (or 'latest') for the puffer policy. Defaults to the "
@@ -580,7 +580,7 @@ def build_puffer_model(args: argparse.Namespace) -> Any:
     spec = POLICY_SPECS[args.policy]
     config = load_puffer_config(spec["config_path"])
     model_path = resolve_puffer_model(
-        args.puffer_model or str(spec["default_model"]), spec["model_glob"]
+        args.load_model_path or str(spec["default_model"]), spec["model_glob"]
     )
     # Keep the obs-visualizer's slicing layout in sync with the active policy.
     viz_model_tool.set_layout(

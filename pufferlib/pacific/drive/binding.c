@@ -197,6 +197,7 @@ static int my_init(Env *env, PyObject *args, PyObject *kwargs) {
     env->human_agent_idx = unpack(kwargs, "human_agent_idx");
     env->ini_file = unpack_str(kwargs, "ini_file");
     env_init_config conf = {0};
+    conf.centerline_only = 1; // Default: only centerline (ROAD_LANE) in grid map / observation
     if (ini_parse(env->ini_file, handler, &conf) < 0) {
         printf("Error while loading %s", env->ini_file);
     }
@@ -238,6 +239,7 @@ static int my_init(Env *env, PyObject *args, PyObject *kwargs) {
     OVERRIDE_INT(collision_behavior);
     OVERRIDE_INT(offroad_behavior);
     OVERRIDE_INT(offroad_mode);
+    OVERRIDE_INT(centerline_only);
     OVERRIDE_FLOAT(lane_width);
     OVERRIDE_FLOAT(dt);
     OVERRIDE_INT(termination_mode);
@@ -273,6 +275,7 @@ static int my_init(Env *env, PyObject *args, PyObject *kwargs) {
     env->collision_behavior = conf.collision_behavior;
     env->offroad_behavior = conf.offroad_behavior;
     env->offroad_mode = conf.offroad_mode;
+    env->centerline_only = conf.centerline_only;
     env->lane_width = conf.lane_width > 0.0f ? conf.lane_width : 3.5f;
     env->max_controlled_agents = unpack(kwargs, "max_controlled_agents");
     env->dt = conf.dt;

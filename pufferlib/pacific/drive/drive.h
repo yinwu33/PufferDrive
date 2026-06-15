@@ -363,6 +363,7 @@ struct Drive {
     float lane_width_min;
     float lane_width_max;
     float fixed_lane_width;
+    int centerline_only; // If set, only ROAD_LANE (centerline) segments enter the grid map / observation
     char *map_name;
     float world_mean_x;
     float world_mean_y;
@@ -669,7 +670,8 @@ void init_grid_map(Drive *env) {
 
     // Calculate number of entities in each grid cell
     for (int i = 0; i < env->num_entities; i++) {
-        if (env->entities[i].type > 3 && env->entities[i].type < 7) {
+        if (env->entities[i].type > 3 && env->entities[i].type < 7 &&
+            (!env->centerline_only || env->entities[i].type == ROAD_LANE)) {
             for (int j = 0; j < env->entities[i].array_size - 1; j++) {
                 float x_center = (env->entities[i].traj_x[j] + env->entities[i].traj_x[j + 1]) / 2;
                 float y_center = (env->entities[i].traj_y[j] + env->entities[i].traj_y[j + 1]) / 2;
@@ -698,8 +700,10 @@ void init_grid_map(Drive *env) {
 
     // Populate grid cells
     for (int i = 0; i < env->num_entities; i++) {
-        if (env->entities[i].type > 3 &&
-            env->entities[i].type < 7) { // NOTE: Only Road Edges, Lines, and Lanes in grid map
+        if (env->entities[i].type > 3 && env->entities[i].type < 7 &&
+            (!env->centerline_only ||
+             env->entities[i].type == ROAD_LANE)) { // NOTE: Only Road Edges, Lines, and Lanes in grid map;
+                                                    // centerline_only restricts to ROAD_LANE
             for (int j = 0; j < env->entities[i].array_size - 1; j++) {
                 float x_center = (env->entities[i].traj_x[j] + env->entities[i].traj_x[j + 1]) / 2;
                 float y_center = (env->entities[i].traj_y[j] + env->entities[i].traj_y[j + 1]) / 2;
@@ -1256,11 +1260,9 @@ void compute_agent_metrics(Drive *env, int agent_idx) {
 
     // Check for vehicle collisions (skip for pedestrians)
     int car_collided_with_index = -1;
-    if (agent->type != PEDESTRIAN) {
-        car_collided_with_index = collision_check(env, agent_idx);
-        if (car_collided_with_index != -1)
-            collided = VEHICLE_COLLISION;
-    }
+    car_collided_with_index = collision_check(env, agent_idx);
+    if (car_collided_with_index != -1)
+        collided = VEHICLE_COLLISION;
 
     agent->collision_state = collided;
 

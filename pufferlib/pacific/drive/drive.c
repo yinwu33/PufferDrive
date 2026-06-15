@@ -40,6 +40,7 @@ int demo(const char *map_name, const char *policy_name, int show_grid, int obs_o
 
     // Parse configuration from INI file
     env_init_config conf = {0};
+    conf.centerline_only = 1; // Default: only centerline (ROAD_LANE) in grid map / observation
     const char *ini_file = "pufferlib/config/pacific/bad_driver.ini";
     if (ini_parse(ini_file, handler, &conf) < 0) {
         fprintf(stderr, "Error: Could not load %s. Cannot determine environment configuration.\n", ini_file);
@@ -65,6 +66,9 @@ int demo(const char *map_name, const char *policy_name, int show_grid, int obs_o
         .condition_sample_mode = conf.condition_sample_mode,
         .fixed_collision_factor = conf.fixed_collision_factor,
         .fixed_offroad_factor = conf.fixed_offroad_factor,
+        .lane_width_min = conf.lane_width_min > 0.0f ? conf.lane_width_min : 1.0f,
+        .lane_width_max = conf.lane_width_max > 0.0f ? conf.lane_width_max : 5.0f,
+        .fixed_lane_width = conf.fixed_lane_width > 0.0f ? conf.fixed_lane_width : 3.5f,
         .reward_goal = conf.reward_goal,
         .reward_goal_post_respawn = conf.reward_goal_post_respawn,
         .reward_steer_jitter = conf.reward_steer_jitter,
@@ -78,6 +82,9 @@ int demo(const char *map_name, const char *policy_name, int show_grid, int obs_o
         .termination_mode = conf.termination_mode,
         .collision_behavior = conf.collision_behavior,
         .offroad_behavior = conf.offroad_behavior,
+        .offroad_mode = conf.offroad_mode,
+        .centerline_only = conf.centerline_only,
+        .lane_width = conf.lane_width > 0.0f ? conf.lane_width : 3.5f,
         .init_steps = conf.init_steps,
         .init_mode = conf.init_mode,
         .control_mode = conf.control_mode,

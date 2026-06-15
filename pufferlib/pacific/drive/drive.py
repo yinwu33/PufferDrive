@@ -47,6 +47,7 @@ class Drive(pufferlib.PufferEnv):
         collision_behavior=0,
         offroad_behavior=0,
         offroad_mode="road_edge",
+        centerline_only=True,
         lane_width=3.5,
         dt=0.1,
         episode_length=None,
@@ -91,6 +92,7 @@ class Drive(pufferlib.PufferEnv):
         self.collision_behavior = collision_behavior
         self.offroad_behavior = offroad_behavior
         self.offroad_mode_str = offroad_mode
+        self.centerline_only = int(centerline_only)
         self.lane_width = lane_width
         self.human_agent_idx = human_agent_idx
         self.episode_length = episode_length
@@ -258,6 +260,7 @@ class Drive(pufferlib.PufferEnv):
                 collision_behavior=self.collision_behavior,
                 offroad_behavior=self.offroad_behavior,
                 offroad_mode=self.offroad_mode,
+                centerline_only=self.centerline_only,
                 lane_width=self.lane_width,
                 dt=dt,
                 episode_length=(int(episode_length) if episode_length is not None else None),
@@ -337,6 +340,7 @@ class Drive(pufferlib.PufferEnv):
                 collision_behavior=self.collision_behavior,
                 offroad_behavior=self.offroad_behavior,
                 offroad_mode=self.offroad_mode,
+                centerline_only=self.centerline_only,
                 lane_width=self.lane_width,
                 dt=self.dt,
                 episode_length=(int(self.episode_length) if self.episode_length is not None else None),

@@ -602,6 +602,13 @@ class PuffeRL:
         if not os.path.exists(path):
             os.makedirs(path)
 
+        # Save a copy of the config used for this run alongside the checkpoints
+        config_path = (self.full_args or {}).get("config_path")
+        if config_path and os.path.exists(config_path):
+            config_dst = os.path.join(path, os.path.basename(config_path))
+            if not os.path.exists(config_dst):
+                shutil.copy(config_path, config_dst)
+
         model_name = f"model_{self.config['env']}_{self.epoch:06d}.pt"
         model_path = os.path.join(path, model_name)
         if os.path.exists(model_path):
@@ -1518,11 +1525,13 @@ def load_config(env_name, config_dir=None):
     if env_name == "default":
         p = configparser.ConfigParser()
         p.read(puffer_default_config)
+        matched_config_path = puffer_default_config
     else:
         for path in glob.glob(puffer_config_dir, recursive=True):
             p = configparser.ConfigParser()
             p.read([puffer_default_config, path])
             if env_name in p["base"]["env_name"].split():
+                matched_config_path = path
                 break
         else:
             raise pufferlib.APIUsageError("No config for env_name {}".format(env_name))
@@ -1555,6 +1564,7 @@ def load_config(env_name, config_dir=None):
         prev[subkey] = value
 
     args["train"]["use_rnn"] = args["rnn_name"] is not None
+    args["config_path"] = matched_config_path
     return args
 
 

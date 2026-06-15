@@ -31,6 +31,7 @@ typedef struct {
     int collision_behavior;
     int offroad_behavior;
     int offroad_mode;
+    int centerline_only;
     float lane_width;
     int spawn_immunity_timer;
     float dt;
@@ -125,6 +126,14 @@ static int handler(void *config, const char *section, const char *name, const ch
         } else {
             printf("Warning: Unknown offroad_mode value '%s', defaulting to road_edge\n", value);
             env_config->offroad_mode = 0;
+        }
+    } else if (MATCH("env", "centerline_only")) {
+        if (strcmp(value, "True") == 0 || strcmp(value, "true") == 0 || strcmp(value, "1") == 0) {
+            env_config->centerline_only = 1;
+        } else if (strcmp(value, "False") == 0 || strcmp(value, "false") == 0 || strcmp(value, "0") == 0) {
+            env_config->centerline_only = 0;
+        } else {
+            env_config->centerline_only = atoi(value);
         }
     } else if (MATCH("env", "lane_width")) {
         env_config->lane_width = atof(value);
