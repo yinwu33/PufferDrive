@@ -90,11 +90,11 @@
        // gridmap, diagonal poly-lines -> sqrt(2), include diagonal ends -> 2
 
 // Observation constants
-#define MAX_ROAD_SEGMENT_OBSERVATIONS 512
+#define MAX_ROAD_SEGMENT_OBSERVATIONS 128
 
 // Maximum number of agents per scene
 #ifndef MAX_AGENTS
-#define MAX_AGENTS 64
+#define MAX_AGENTS 32
 #endif
 #define STOP_AGENT 1
 #define REMOVE_AGENT 2
@@ -372,6 +372,7 @@ struct Drive {
     float reward_goal_post_respawn;
     float reward_steer_jitter;
     float reward_time_penalty;
+    float overspeed_penalty;
     float goal_radius;
     float goal_speed;
     int logs_capacity;
@@ -1150,6 +1151,102 @@ float point_to_segment_distance_2d(float px, float py, float x1, float y1, float
     return sqrtf((px - closestX) * (px - closestX) + (py - closestY) * (py - closestY));
 }
 
+int clamped_init_step(Entity *entity, int init_steps) {
+    int step = init_steps;
+    if (step >= entity->array_size)
+        step = entity->array_size - 1;
+    if (step < 0)
+        step = 0;
+    return step;
+}
+
+float initial_offroad_lane_width(Drive *env) {
+    if (env->condition_sample_mode == CONDITION_FIXED && env->fixed_lane_width > 0.0f)
+        return env->fixed_lane_width;
+    if (env->lane_width > 0.0f)
+        return env->lane_width;
+    if (env->lane_width_min > 0.0f && env->lane_width_max > env->lane_width_min)
+        return 0.5f * (env->lane_width_min + env->lane_width_max);
+    return 3.5f;
+}
+
+bool is_initially_offroad(Drive *env, int agent_idx) {
+    Entity *agent = &env->entities[agent_idx];
+    if (agent->type != VEHICLE)
+        return false;
+
+    int step = clamped_init_step(agent, env->init_steps);
+    if (agent->traj_valid && agent->traj_valid[step] != 1)
+        return true;
+
+    float x = agent->traj_x[step];
+    float y = agent->traj_y[step];
+    if (x == INVALID_POSITION || y == INVALID_POSITION)
+        return true;
+
+    if (env->offroad_mode == OFFROAD_LANE_CENTER) {
+        float min_lane_center_distance = (float)INT16_MAX;
+        int found_lane = 0;
+
+        for (int i = env->num_objects; i < env->num_entities; i++) {
+            Entity *lane = &env->entities[i];
+            if (lane->type != ROAD_LANE)
+                continue;
+
+            for (int j = 0; j < lane->array_size - 1; j++) {
+                float dist = point_to_segment_distance_2d(x, y, lane->traj_x[j], lane->traj_y[j], lane->traj_x[j + 1],
+                                                          lane->traj_y[j + 1]);
+                if (dist < min_lane_center_distance)
+                    min_lane_center_distance = dist;
+                found_lane = 1;
+            }
+        }
+
+        return !found_lane || min_lane_center_distance > 0.5f * initial_offroad_lane_width(env);
+    }
+
+    if (env->offroad_mode == OFFROAD_ROAD_EDGE) {
+        // Match compute_agent_metrics: road edges are unavailable when centerline_only prunes them from the grid.
+        if (env->centerline_only)
+            return false;
+
+        float heading = agent->traj_heading[step];
+        float half_length = agent->length / 2.0f;
+        float half_width = agent->width / 2.0f;
+        float cos_heading = cosf(heading);
+        float sin_heading = sinf(heading);
+        float corners[4][2];
+        for (int i = 0; i < 4; i++) {
+            corners[i][0] = x + (offsets[i][0] * half_length * cos_heading - offsets[i][1] * half_width * sin_heading);
+            corners[i][1] = y + (offsets[i][0] * half_length * sin_heading + offsets[i][1] * half_width * cos_heading);
+        }
+
+        for (int i = env->num_objects; i < env->num_entities; i++) {
+            Entity *edge = &env->entities[i];
+            if (edge->type != ROAD_EDGE)
+                continue;
+
+            for (int j = 0; j < edge->array_size - 1; j++) {
+                float start[2] = {edge->traj_x[j], edge->traj_y[j]};
+                float end[2] = {edge->traj_x[j + 1], edge->traj_y[j + 1]};
+                for (int k = 0; k < 4; k++) {
+                    int next = (k + 1) % 4;
+                    if (check_line_intersection(corners[k], corners[next], start, end))
+                        return true;
+                }
+            }
+        }
+    }
+
+    return false;
+}
+
+bool initial_offroad(Drive *env, int agent_idx) {
+    if (env->control_mode == CONTROL_WOSAC)
+        return false;
+    return is_initially_offroad(env, agent_idx);
+}
+
 void compute_agent_metrics(Drive *env, int agent_idx) {
     Entity *agent = &env->entities[agent_idx];
 
@@ -1338,7 +1435,16 @@ bool should_control_agent(Drive *env, int agent_idx, int control_limit) {
     float local_goal_y = -goal_dx * sin_heading + goal_dy * cos_heading;
     float distance_to_goal = relative_distance_2d(0, 0, local_goal_x, local_goal_y);
 
-    return distance_to_goal >= MIN_DISTANCE_TO_GOAL;
+    if (distance_to_goal < MIN_DISTANCE_TO_GOAL)
+        return false;
+
+    // TODO: long time
+    if (initial_offroad(env, agent_idx)) {
+        return false;
+    }
+
+    return true;
+
 }
 
 void set_active_agents(Drive *env) {
@@ -1367,7 +1473,7 @@ void set_active_agents(Drive *env) {
     // If we have a SDC index (WOMD), initialize it first:
     int sdc_index = env->sdc_track_index;
 
-    if (sdc_index >= 0) {
+    if (sdc_index >= 0 && !initial_offroad(env, sdc_index)) {
         active_agent_indices[0] = sdc_index;
         env->num_actors++;
         env->active_agent_count++;
@@ -2253,31 +2359,37 @@ void c_step(Drive *env) {
         float current_speed = sqrtf(env->entities[agent_idx].vx * env->entities[agent_idx].vx +
                                     env->entities[agent_idx].vy * env->entities[agent_idx].vy);
 
-        // Reward agent if it is within X meters of goal and speed is below threshold
+        // Goal completion is distance-only; speed controls reward quality.
         bool within_distance = distance_to_goal < env->goal_radius;
         bool within_speed = current_speed <= env->goal_speed;
+        float goal_reward = env->reward_goal;
+        float post_respawn_goal_reward = env->reward_goal_post_respawn;
+        if (!within_speed) {
+            goal_reward -= env->overspeed_penalty;
+            post_respawn_goal_reward -= env->overspeed_penalty;
+        }
 
-        if (within_distance && within_speed && !env->entities[agent_idx].current_goal_reached) {
+        if (within_distance && !env->entities[agent_idx].current_goal_reached) {
             if (env->goal_behavior == GOAL_RESPAWN && env->entities[agent_idx].respawn_timestep != -1) {
-                env->rewards[i] += env->reward_goal_post_respawn;
-                env->logs[i].episode_return += env->reward_goal_post_respawn;
+                env->rewards[i] += post_respawn_goal_reward;
+                env->logs[i].episode_return += post_respawn_goal_reward;
                 env->entities[agent_idx].current_goal_reached = 1;
             } else if (env->goal_behavior == GOAL_GENERATE_NEW && (!env->entities[agent_idx].current_goal_reached)) {
-                env->rewards[i] += env->reward_goal;
-                env->logs[i].episode_return += env->reward_goal;
+                env->rewards[i] += goal_reward;
+                env->logs[i].episode_return += goal_reward;
                 sample_new_goal(env, agent_idx);
                 env->entities[agent_idx].current_goal_reached = 0;
                 env->entities[agent_idx].goals_reached_this_episode += 1.0f;
             } else if (env->goal_behavior == GOAL_REMOVE) { // Remove the agent from the scene at the goal
-                env->rewards[i] += env->reward_goal;
-                env->logs[i].episode_return += env->reward_goal;
+                env->rewards[i] += goal_reward;
+                env->logs[i].episode_return += goal_reward;
                 env->entities[agent_idx].removed = 1;
                 env->entities[agent_idx].x = env->entities[agent_idx].y = -10000.0f;
                 env->entities[agent_idx].vx = env->entities[agent_idx].vy = 0.0f;
                 env->entities[agent_idx].goals_reached_this_episode += 1.0f;
             } else { // Zero out the velocity so that the agent stops at the goal
-                env->rewards[i] += env->reward_goal;
-                env->logs[i].episode_return += env->reward_goal;
+                env->rewards[i] += goal_reward;
+                env->logs[i].episode_return += goal_reward;
                 env->entities[agent_idx].stopped = 1;
                 env->entities[agent_idx].vx = env->entities[agent_idx].vy = 0.0f;
                 env->entities[agent_idx].goals_reached_this_episode += 1.0f;
@@ -3078,13 +3190,14 @@ void draw_scene(Drive *env, Client *client, int mode, int obs_only, int lasers, 
                     draw_road_edge(env, start.x, start.y, end.x, end.y);
                 } else if (env->entities[i].type == ROAD_LANE || env->entities[i].type == ROAD_LINE) {
                     if (env->offroad_mode == OFFROAD_LANE_CENTER && env->entities[i].type == ROAD_LANE) {
-                        // Draw the lane centerline as a 3.5m-wide filled band (road surface).
+                        // Draw the lane centerline as a configurable-width filled band (road surface).
                         // glLineWidth is clamped to ~1px by the GL driver, so fill a quad instead.
                         float dx = end.x - start.x;
                         float dy = end.y - start.y;
                         float len = sqrtf(dx * dx + dy * dy);
                         if (len > 1e-6f) {
-                            float half_width = 1.75f; // 3.5m lane width / 2
+                            float lane_width = env->lane_width;
+                            float half_width = 0.5f * lane_width;
                             float nx = -dy / len * half_width;
                             float ny = dx / len * half_width;
                             float zb = Z_ROAD_MARKINGS - 0.01f; // keep band just below the centerline

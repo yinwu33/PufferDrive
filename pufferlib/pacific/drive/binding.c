@@ -78,6 +78,13 @@ static PyObject *my_shared(PyObject *self, PyObject *args, PyObject *kwargs) {
     int goal_behavior = unpack(kwargs, "goal_behavior");
     float goal_target_distance = unpack(kwargs, "goal_target_distance");
     int max_controlled_agents = unpack(kwargs, "max_controlled_agents");
+    int condition_sample_mode = unpack(kwargs, "condition_sample_mode");
+    float lane_width_min = unpack(kwargs, "lane_width_min");
+    float lane_width_max = unpack(kwargs, "lane_width_max");
+    float fixed_lane_width = unpack(kwargs, "fixed_lane_width");
+    int offroad_mode = unpack(kwargs, "offroad_mode");
+    int centerline_only = unpack(kwargs, "centerline_only");
+    float lane_width = unpack(kwargs, "lane_width");
 
     if (sample_mode == 0) {
         clock_gettime(CLOCK_REALTIME, &ts);
@@ -116,6 +123,13 @@ static PyObject *my_shared(PyObject *self, PyObject *args, PyObject *kwargs) {
         env->goal_behavior = goal_behavior;
         env->goal_target_distance = goal_target_distance;
         env->max_controlled_agents = max_controlled_agents;
+        env->condition_sample_mode = condition_sample_mode;
+        env->lane_width_min = lane_width_min;
+        env->lane_width_max = lane_width_max;
+        env->fixed_lane_width = fixed_lane_width;
+        env->offroad_mode = offroad_mode;
+        env->centerline_only = centerline_only;
+        env->lane_width = lane_width;
         snprintf(map_file, sizeof(map_file), "%s/map_%03d.bin", map_dir, map_id);
         env->entities = load_map_binary(map_file, env);
         // Count the number of controllable agents in map
@@ -236,6 +250,7 @@ static int my_init(Env *env, PyObject *args, PyObject *kwargs) {
     OVERRIDE_FLOAT(reward_goal_post_respawn);
     OVERRIDE_FLOAT(reward_steer_jitter);
     OVERRIDE_FLOAT(reward_time_penalty);
+    OVERRIDE_FLOAT(overspeed_penalty);
     OVERRIDE_INT(collision_behavior);
     OVERRIDE_INT(offroad_behavior);
     OVERRIDE_INT(offroad_mode);
@@ -270,6 +285,7 @@ static int my_init(Env *env, PyObject *args, PyObject *kwargs) {
     env->reward_goal_post_respawn = conf.reward_goal_post_respawn;
     env->reward_steer_jitter = conf.reward_steer_jitter;
     env->reward_time_penalty = conf.reward_time_penalty;
+    env->overspeed_penalty = conf.overspeed_penalty;
     env->episode_length = conf.episode_length;
     env->termination_mode = conf.termination_mode;
     env->collision_behavior = conf.collision_behavior;

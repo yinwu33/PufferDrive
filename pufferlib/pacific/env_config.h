@@ -26,6 +26,7 @@ typedef struct {
     float reward_vehicle_collision_post_respawn;
     float reward_steer_jitter;
     float reward_time_penalty;
+    float overspeed_penalty;
     float goal_radius;
     float goal_speed;
     int collision_behavior;
@@ -108,6 +109,8 @@ static int handler(void *config, const char *section, const char *name, const ch
         env_config->reward_steer_jitter = atof(value);
     } else if (MATCH("env", "reward_time_penalty")) {
         env_config->reward_time_penalty = atof(value);
+    } else if (MATCH("env", "overspeed_penalty")) {
+        env_config->overspeed_penalty = atof(value);
     } else if (MATCH("env", "reward_vehicle_collision_post_respawn")) {
         env_config->reward_vehicle_collision_post_respawn = atof(value);
     } else if (MATCH("env", "goal_radius")) {

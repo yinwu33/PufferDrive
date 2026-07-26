@@ -40,6 +40,7 @@ class Drive(pufferlib.PufferEnv):
         reward_goal_post_respawn=0.5,
         reward_steer_jitter=0.0,
         reward_time_penalty=0.0,
+        overspeed_penalty=0.0,
         goal_behavior=0,
         goal_target_distance=10.0,
         goal_radius=2.0,
@@ -85,6 +86,7 @@ class Drive(pufferlib.PufferEnv):
         self.reward_goal_post_respawn = reward_goal_post_respawn
         self.reward_steer_jitter = reward_steer_jitter
         self.reward_time_penalty = reward_time_penalty
+        self.overspeed_penalty = overspeed_penalty
         self.goal_radius = goal_radius
         self.goal_speed = goal_speed
         self.goal_behavior = goal_behavior
@@ -219,6 +221,13 @@ class Drive(pufferlib.PufferEnv):
             goal_target_distance=self.goal_target_distance,
             sample_mode=self.sample_mode,
             max_controlled_agents=self.max_controlled_agents,
+            condition_sample_mode=self.condition_sample_mode,
+            lane_width_min=self.lane_width_min,
+            lane_width_max=self.lane_width_max,
+            fixed_lane_width=self.fixed_lane_width,
+            offroad_mode=self.offroad_mode,
+            centerline_only=self.centerline_only,
+            lane_width=self.lane_width,
         )
 
         self.num_agents = agent_offsets[-1]
@@ -253,6 +262,7 @@ class Drive(pufferlib.PufferEnv):
                 reward_goal_post_respawn=reward_goal_post_respawn,
                 reward_steer_jitter=reward_steer_jitter,
                 reward_time_penalty=reward_time_penalty,
+                overspeed_penalty=overspeed_penalty,
                 goal_radius=goal_radius,
                 goal_speed=goal_speed,
                 goal_behavior=self.goal_behavior,
@@ -301,6 +311,13 @@ class Drive(pufferlib.PufferEnv):
             map_dir=self.map_dir,
             sample_mode=self.sample_mode,
             max_controlled_agents=self.max_controlled_agents,
+            condition_sample_mode=self.condition_sample_mode,
+            lane_width_min=self.lane_width_min,
+            lane_width_max=self.lane_width_max,
+            fixed_lane_width=self.fixed_lane_width,
+            offroad_mode=self.offroad_mode,
+            centerline_only=self.centerline_only,
+            lane_width=self.lane_width,
         )
         self.agent_offsets = agent_offsets
         self.map_ids = map_ids
@@ -333,6 +350,7 @@ class Drive(pufferlib.PufferEnv):
                 reward_goal_post_respawn=self.reward_goal_post_respawn,
                 reward_steer_jitter=self.reward_steer_jitter,
                 reward_time_penalty=self.reward_time_penalty,
+                overspeed_penalty=self.overspeed_penalty,
                 goal_radius=self.goal_radius,
                 goal_behavior=self.goal_behavior,
                 goal_target_distance=self.goal_target_distance,
