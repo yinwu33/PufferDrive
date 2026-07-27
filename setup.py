@@ -239,7 +239,7 @@ extension_kwargs = dict(
 c_extensions = []
 if not NO_OCEAN:
     c_extension_paths = []
-    for package in ("ocean", "pacific"):
+    for package in ("ocean", "pacific", "atlantic"):
         c_extension_paths.extend(glob.glob(f"pufferlib/{package}/**/binding.c", recursive=True))
     c_extensions = [
         Extension(
