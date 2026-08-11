@@ -1094,7 +1094,26 @@ def eval(env_name, args=None, vecenv=None, policy=None):
     # Eval modes may use eval-specific map sampling config.
     if "sample_mode" in args["eval"]:
         args["env"]["sample_mode"] = args["eval"]["sample_mode"]
-    for key in ("condition_sample_mode", "fixed_collision_factor", "fixed_offroad_factor", "fixed_lane_width"):
+    # Propagate eval-specific reward-condition config to the env. This covers both
+    # the sampling mode (condition_sample_mode = "fixed" | "random"), the fixed
+    # factor values used when mode == "fixed", and the [min, max] ranges used when
+    # mode == "random". Set --eval.condition-sample-mode random to evaluate with a
+    # randomly sampled adversarial factor f per agent instead of a fixed value.
+    for key in (
+        "condition_sample_mode",
+        "fixed_self_fault_factor",
+        "fixed_non_self_fault_factor",
+        "fixed_offroad_factor",
+        "fixed_lane_width",
+        "self_fault_factor_min",
+        "self_fault_factor_max",
+        "non_self_fault_factor_min",
+        "non_self_fault_factor_max",
+        "offroad_factor_min",
+        "offroad_factor_max",
+        "lane_width_min",
+        "lane_width_max",
+    ):
         if key in args["eval"]:
             args["env"][key] = args["eval"][key]
     if "map_dir" in args["eval"]:

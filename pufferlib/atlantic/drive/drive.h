@@ -184,6 +184,9 @@ const Color EXPERT_REPLAY = (Color){162, 220, 183, 255};
 const Color EXPERT_REPLAY_SMALL = (Color){95, 112, 93, 255};
 const Color LIGHT_ORANGE = (Color){255, 160, 80, 255};
 const Color LIGHT_PURPLE = (Color){204, 204, 255, 255};
+// Non-self-fault vehicle collisions are drawn yellow in the BEV view to
+// distinguish them from self-fault/ambiguous collisions and offroad (red).
+const Color NON_SELF_FAULT_YELLOW = (Color){255, 221, 0, 255};
 
 struct timespec ts;
 
@@ -245,12 +248,21 @@ struct Entity {
     int collision_state;
     int prev_collision_state; // collision_state from previous step; used for rising-edge collision/offroad penalty
     int collided_with_index;
+    // Fault classification latched on the rising edge of a vehicle collision.
+    // Keep this stable while the same contact persists so rendering and logs
+    // continue to show the classification that actually settled the reward.
     int collision_fault;
+    // Counterparty responsibility from the same pre-impact snapshot. This is
+    // computed directly instead of reading the other entity's collision_fault,
+    // which may not have been settled yet (or may belong to a static expert).
+    int other_collision_fault;
     int non_self_fault_rewarded;
     float impact_vx;
     float impact_vy;
-    float collision_normal_x;
-    float collision_normal_y;
+    // World-space centroid of the overlap region of the latched collision, kept
+    // for rendering and diagnostics. This is the point fault attribution used.
+    float collision_contact_x;
+    float collision_contact_y;
     float metrics_array[5]; // metrics_array: [collision, offroad, reached_goal, lane_aligned
     float x;
     float y;
@@ -606,11 +618,12 @@ void set_start_position(Drive *env) {
         e->prev_collision_state = 0;
         e->collided_with_index = -1;
         e->collision_fault = FAULT_NONE;
+        e->other_collision_fault = FAULT_NONE;
         e->non_self_fault_rewarded = 0;
         e->impact_vx = e->vx;
         e->impact_vy = e->vy;
-        e->collision_normal_x = 0.0f;
-        e->collision_normal_y = 0.0f;
+        e->collision_contact_x = 0.0f;
+        e->collision_contact_y = 0.0f;
         e->metrics_array[COLLISION_IDX] = 0.0f;    // vehicle collision
         e->metrics_array[OFFROAD_IDX] = 0.0f;      // offroad
         e->metrics_array[REACHED_GOAL_IDX] = 0.0f; // reached goal
@@ -931,6 +944,9 @@ void move_expert(Drive *env, float *actions, int agent_idx) {
         agent->heading = 0.0f;
         agent->heading_x = 1.0f;
         agent->heading_y = 0.0f;
+        agent->vx = 0.0f;
+        agent->vy = 0.0f;
+        agent->vz = 0.0f;
         return;
     }
     if (agent->traj_valid && agent->traj_valid[t] == 0) {
@@ -940,6 +956,9 @@ void move_expert(Drive *env, float *actions, int agent_idx) {
         agent->heading = 0.0f;
         agent->heading_x = 1.0f;
         agent->heading_y = 0.0f;
+        agent->vx = 0.0f;
+        agent->vy = 0.0f;
+        agent->vz = 0.0f;
         return;
     }
     agent->x = agent->traj_x[t];
@@ -948,6 +967,13 @@ void move_expert(Drive *env, float *actions, int agent_idx) {
     agent->heading = agent->traj_heading[t];
     agent->heading_x = cosf(agent->heading);
     agent->heading_y = sinf(agent->heading);
+    // Expert actors participate in collision responsibility attribution. Keep
+    // their live velocity synchronized with the replay trajectory so the global
+    // pre-impact snapshot does not capture the stale zero velocity assigned to
+    // non-controlled actors at reset.
+    agent->vx = agent->traj_vx[t];
+    agent->vy = agent->traj_vy[t];
+    agent->vz = agent->traj_vz[t];
 }
 
 bool check_line_intersection(float p1[2], float p2[2], float q1[2], float q2[2]) {
@@ -1012,10 +1038,37 @@ int checkNeighbors(Drive *env, float x, float y, GridMapEntity *entity_list, int
     return entity_list_count;
 }
 
-int check_obb_collision_contact(Entity *car1, Entity *car2, float *normal_x, float *normal_y,
-                                float *penetration_out) {
-    // SAT overlap test for two oriented boxes. The returned normal is the
-    // minimum-translation axis, oriented from car1 toward car2.
+// Counter-clockwise corners of an entity's oriented bounding box, expressed
+// relative to (origin_x, origin_y). Keeping the caller's origin next to the
+// boxes avoids catastrophic cancellation, because world coordinates in a
+// scenario are far larger than a vehicle.
+void obb_corners_ccw(const Entity *entity, float origin_x, float origin_y, float corners[4][2]) {
+    float cx = entity->x - origin_x;
+    float cy = entity->y - origin_y;
+    float half_len = entity->length * 0.5f;
+    float half_width = entity->width * 0.5f;
+    // Forward and left half-axes of the box.
+    float fx = half_len * entity->heading_x;
+    float fy = half_len * entity->heading_y;
+    float lx = -half_width * entity->heading_y;
+    float ly = half_width * entity->heading_x;
+
+    corners[0][0] = cx + fx + lx; // front-left
+    corners[0][1] = cy + fy + ly;
+    corners[1][0] = cx - fx + lx; // rear-left
+    corners[1][1] = cy - fy + ly;
+    corners[2][0] = cx - fx - lx; // rear-right
+    corners[2][1] = cy - fy - ly;
+    corners[3][0] = cx + fx - lx; // front-right
+    corners[3][1] = cy + fy - ly;
+}
+
+int check_obb_collision_contact(Entity *car1, Entity *car2, float *penetration_out) {
+    // SAT overlap test for two oriented boxes, reporting the minimum penetration
+    // depth. The separating axis is deliberately not reported: it is the cheapest
+    // direction to push the boxes apart, which flips between the length and width
+    // axes as penetration deepens and says nothing about which face made contact.
+    // Contact location comes from obb_contact_point instead.
     float cos1 = car1->heading_x;
     float sin1 = car1->heading_y;
     float cos2 = car2->heading_x;
@@ -1050,10 +1103,8 @@ int check_obb_collision_contact(Entity *car1, Entity *car2, float *normal_x, flo
     };
 
     float minimum_overlap = INFINITY;
-    float minimum_axis_x = 0.0f;
-    float minimum_axis_y = 0.0f;
 
-    // Check each axis and retain the minimum-penetration contact normal.
+    // Check each axis and retain the smallest overlap found.
     for (int i = 0; i < 4; i++) {
         float min1 = INFINITY, max1 = -INFINITY;
         float min2 = INFINITY, max2 = -INFINITY;
@@ -1080,21 +1131,9 @@ int check_obb_collision_contact(Entity *car1, Entity *car2, float *normal_x, flo
         float overlap = fminf(max1, max2) - fmaxf(min1, min2);
         if (overlap < minimum_overlap) {
             minimum_overlap = overlap;
-            minimum_axis_x = axes[i][0];
-            minimum_axis_y = axes[i][1];
         }
     }
 
-    float center_dx = car2->x - car1->x;
-    float center_dy = car2->y - car1->y;
-    if (center_dx * minimum_axis_x + center_dy * minimum_axis_y < 0.0f) {
-        minimum_axis_x = -minimum_axis_x;
-        minimum_axis_y = -minimum_axis_y;
-    }
-    if (normal_x)
-        *normal_x = minimum_axis_x;
-    if (normal_y)
-        *normal_y = minimum_axis_y;
     if (penetration_out)
         *penetration_out = minimum_overlap;
 
@@ -1102,10 +1141,116 @@ int check_obb_collision_contact(Entity *car1, Entity *car2, float *normal_x, flo
 }
 
 int check_aabb_collision(Entity *car1, Entity *car2) {
-    return check_obb_collision_contact(car1, car2, NULL, NULL, NULL);
+    return check_obb_collision_contact(car1, car2, NULL);
 }
 
-int collision_check_contact(Drive *env, int agent_idx, float *normal_x, float *normal_y) {
+// A convex polygon clipped by a half-plane gains at most one vertex, so clipping
+// a quad against four edges tops out at eight. The extra slack absorbs duplicate
+// vertices emitted when a corner lands exactly on a clip edge.
+#define MAX_CONTACT_POLYGON_VERTICES 12
+
+// Sutherland-Hodgman: keep the part of a convex polygon on the inward side of
+// the directed edge a -> b of a counter-clockwise convex polygon. Inward is to
+// the left of the edge.
+int clip_polygon_against_edge(const float in[][2], int in_count, float ax, float ay, float bx, float by,
+                              float out[][2]) {
+    float ex = bx - ax;
+    float ey = by - ay;
+    int out_count = 0;
+    for (int i = 0; i < in_count; i++) {
+        int j = (i + 1) % in_count;
+        float side_i = ex * (in[i][1] - ay) - ey * (in[i][0] - ax);
+        float side_j = ex * (in[j][1] - ay) - ey * (in[j][0] - ax);
+
+        if (side_i >= 0.0f && out_count < MAX_CONTACT_POLYGON_VERTICES) {
+            out[out_count][0] = in[i][0];
+            out[out_count][1] = in[i][1];
+            out_count++;
+        }
+        if ((side_i >= 0.0f) != (side_j >= 0.0f) && out_count < MAX_CONTACT_POLYGON_VERTICES) {
+            float t = side_i / (side_i - side_j);
+            out[out_count][0] = in[i][0] + t * (in[j][0] - in[i][0]);
+            out[out_count][1] = in[i][1] + t * (in[j][1] - in[i][1]);
+            out_count++;
+        }
+    }
+    return out_count;
+}
+
+// World-space centroid of the region where two oriented boxes overlap. This is
+// the geometric contact location, and unlike the SAT separating axis it stays
+// put as penetration deepens. Returns 0 when the boxes do not overlap.
+int obb_contact_point(Entity *car1, Entity *car2, float *contact_x, float *contact_y) {
+    // Work relative to car1's center for numerical conditioning, then shift back.
+    float origin_x = car1->x;
+    float origin_y = car1->y;
+
+    float clip_polygon[4][2];
+    obb_corners_ccw(car2, origin_x, origin_y, clip_polygon);
+
+    float buffer_a[MAX_CONTACT_POLYGON_VERTICES][2];
+    float buffer_b[MAX_CONTACT_POLYGON_VERTICES][2];
+    obb_corners_ccw(car1, origin_x, origin_y, buffer_a);
+    int count = 4;
+
+    float(*current)[2] = buffer_a;
+    float(*next)[2] = buffer_b;
+    for (int edge = 0; edge < 4; edge++) {
+        int edge_end = (edge + 1) % 4;
+        count = clip_polygon_against_edge(current, count, clip_polygon[edge][0], clip_polygon[edge][1],
+                                          clip_polygon[edge_end][0], clip_polygon[edge_end][1], next);
+        if (count == 0) {
+            // The boxes do not overlap, or rounding erased a hairline overlap that
+            // SAT accepted. Fall back to the midpoint of the two centers so callers
+            // always get a usable point.
+            if (contact_x)
+                *contact_x = 0.5f * (car1->x + car2->x);
+            if (contact_y)
+                *contact_y = 0.5f * (car1->y + car2->y);
+            return 0;
+        }
+        float(*swap)[2] = current;
+        current = next;
+        next = swap;
+    }
+
+    // Shoelace centroid. A grazing contact degenerates to a segment or a point,
+    // where the area vanishes and the vertex average is the right answer.
+    double area2 = 0.0;
+    double sum_x = 0.0;
+    double sum_y = 0.0;
+    for (int i = 0; i < count; i++) {
+        int j = (i + 1) % count;
+        double cross = (double)current[i][0] * current[j][1] - (double)current[j][0] * current[i][1];
+        area2 += cross;
+        sum_x += ((double)current[i][0] + current[j][0]) * cross;
+        sum_y += ((double)current[i][1] + current[j][1]) * cross;
+    }
+
+    double local_x;
+    double local_y;
+    if (fabs(area2) > 1e-9) {
+        local_x = sum_x / (3.0 * area2);
+        local_y = sum_y / (3.0 * area2);
+    } else {
+        local_x = 0.0;
+        local_y = 0.0;
+        for (int i = 0; i < count; i++) {
+            local_x += current[i][0];
+            local_y += current[i][1];
+        }
+        local_x /= count;
+        local_y /= count;
+    }
+
+    if (contact_x)
+        *contact_x = origin_x + (float)local_x;
+    if (contact_y)
+        *contact_y = origin_y + (float)local_y;
+    return 1;
+}
+
+int collision_check_contact(Drive *env, int agent_idx, float *contact_x, float *contact_y) {
     Entity *agent = &env->entities[agent_idx];
 
     if (agent->x == INVALID_POSITION)
@@ -1118,8 +1263,6 @@ int collision_check_contact(Drive *env, int agent_idx, float *normal_x, float *n
 
     int car_collided_with_index = -1;
     float best_penetration = INFINITY;
-    float best_normal_x = 0.0f;
-    float best_normal_y = 0.0f;
 
     if (agent->respawn_timestep != -1)
         return car_collided_with_index; // Skip respawning entities
@@ -1143,23 +1286,16 @@ int collision_check_contact(Drive *env, int agent_idx, float *normal_x, float *n
         float dist = ((x1 - agent->x) * (x1 - agent->x) + (y1 - agent->y) * (y1 - agent->y));
         if (dist > 225.0f)
             continue;
-        float candidate_normal_x = 0.0f;
-        float candidate_normal_y = 0.0f;
         float candidate_penetration = 0.0f;
-        if (check_obb_collision_contact(agent, entity, &candidate_normal_x, &candidate_normal_y,
-                                        &candidate_penetration) &&
+        if (check_obb_collision_contact(agent, entity, &candidate_penetration) &&
             candidate_penetration < best_penetration) {
             car_collided_with_index = index;
             best_penetration = candidate_penetration;
-            best_normal_x = candidate_normal_x;
-            best_normal_y = candidate_normal_y;
         }
     }
 
-    if (normal_x)
-        *normal_x = best_normal_x;
-    if (normal_y)
-        *normal_y = best_normal_y;
+    if (car_collided_with_index != -1)
+        obb_contact_point(agent, &env->entities[car_collided_with_index], contact_x, contact_y);
     return car_collided_with_index;
 }
 
@@ -1167,13 +1303,42 @@ int collision_check(Drive *env, int agent_idx) {
     return collision_check_contact(env, agent_idx, NULL, NULL);
 }
 
-int contact_is_front_edge(Entity *entity, float outward_normal_x, float outward_normal_y,
-                          float front_contact_cos_threshold) {
-    float forward_component = outward_normal_x * entity->heading_x + outward_normal_y * entity->heading_y;
-    return forward_component > front_contact_cos_threshold;
+int contact_is_leading_edge(Entity *entity, float contact_x, float contact_y,
+                            float front_contact_cos_threshold) {
+    // Which face of the bounding box the contact landed on, answered from the
+    // geometry of the overlap rather than from the direction of travel.
+    float dx = contact_x - entity->x;
+    float dy = contact_y - entity->y;
+    float longitudinal = dx * entity->heading_x + dy * entity->heading_y;
+    float lateral = -dx * entity->heading_y + dy * entity->heading_x;
+
+    float half_len = entity->length * 0.5f;
+    float half_width = entity->width * 0.5f;
+    if (half_len <= 0.0f || half_width <= 0.0f)
+        return 0;
+
+    // Dividing by the half extents maps the box onto the unit square, putting its
+    // corners at exactly 45 degrees. front_contact_cos_threshold = cos(45 deg)
+    // therefore selects the whole leading face corner to corner, whatever the
+    // vehicle's aspect ratio; raising it narrows the face toward the centerline.
+    float ex = longitudinal / half_len;
+    float ey = lateral / half_width;
+    float norm = sqrtf(ex * ex + ey * ey);
+    if (norm < 1e-6f)
+        return 0; // Contact centroid sits on the box center: no face to attribute.
+    ex /= norm;
+
+    // The leading face follows the direction of travel: the front face when
+    // driving forward, the rear face when reversing. This is what closes the
+    // reverse-into-others loophole, without letting a car that is merely moving
+    // sideways relabel its flank as a leading edge.
+    float longitudinal_speed = entity->impact_vx * entity->heading_x + entity->impact_vy * entity->heading_y;
+    float leading = (longitudinal_speed >= 0.0f) ? 1.0f : -1.0f;
+
+    return leading * ex > front_contact_cos_threshold;
 }
 
-int classify_collision_fault(Drive *env, Entity *agent, Entity *other, float normal_x, float normal_y) {
+int classify_collision_fault(Drive *env, Entity *agent, Entity *other, float contact_x, float contact_y) {
     float agent_speed = sqrtf(agent->impact_vx * agent->impact_vx + agent->impact_vy * agent->impact_vy);
     float other_speed = sqrtf(other->impact_vx * other->impact_vx + other->impact_vy * other->impact_vy);
 
@@ -1182,12 +1347,13 @@ int classify_collision_fault(Drive *env, Entity *agent, Entity *other, float nor
     if (agent_speed <= env->fault_speed_threshold)
         return NON_SELF_FAULT;
 
-    if (contact_is_front_edge(agent, normal_x, normal_y, env->front_contact_cos_threshold))
+    if (contact_is_leading_edge(agent, contact_x, contact_y, env->front_contact_cos_threshold))
         return SELF_FAULT;
 
-    // The outward normal for the other participant points in the opposite direction.
+    // The contact point is shared by both participants; only the frame it is
+    // resolved against differs.
     if (other_speed > env->fault_speed_threshold &&
-        contact_is_front_edge(other, -normal_x, -normal_y, env->front_contact_cos_threshold))
+        contact_is_leading_edge(other, contact_x, contact_y, env->front_contact_cos_threshold))
         return NON_SELF_FAULT;
 
     // A moving ego contacting a nearly stationary object away from ego's
@@ -1198,6 +1364,41 @@ int classify_collision_fault(Drive *env, Entity *agent, Entity *other, float nor
     // Side-side, rear-rear and numerically unclear corner contacts are not
     // positively rewarded.
     return AMBIGUOUS_FAULT;
+}
+
+typedef struct CollisionFaultPair CollisionFaultPair;
+struct CollisionFaultPair {
+    int self_fault;
+    int other_fault;
+};
+
+CollisionFaultPair classify_collision_pair(Drive *env, Entity *agent, Entity *other, float contact_x,
+                                           float contact_y) {
+    CollisionFaultPair pair = {
+        .self_fault = classify_collision_fault(env, agent, other, contact_x, contact_y),
+        .other_fault = classify_collision_fault(env, other, agent, contact_x, contact_y),
+    };
+    return pair;
+}
+
+float settle_adversarial_collision_reward(Entity *agent, int self_fault, int other_fault,
+                                          int non_self_fault_reward_once) {
+    // Own responsibility always takes precedence. In particular, a head-on
+    // collision where both participants are SELF_FAULT must penalize both rather
+    // than rewarding each participant because the counterparty is also at fault.
+    if (self_fault == SELF_FAULT)
+        return -agent->self_fault_factor;
+
+    // collision_behavior is applied after reward settlement, so stopped is true
+    // here only for a vehicle that was already stopped before this contact. Such
+    // a vehicle must not farm another positive reward when a third car hits it.
+    if (other_fault == SELF_FAULT && !agent->stopped &&
+        (!non_self_fault_reward_once || !agent->non_self_fault_rewarded)) {
+        agent->non_self_fault_rewarded = 1;
+        return agent->non_self_fault_factor;
+    }
+
+    return 0.0f;
 }
 
 int check_lane_aligned(Entity *car, Entity *lane, int geometry_idx) {
@@ -1253,9 +1454,11 @@ void reset_agent_metrics(Drive *env, int agent_idx) {
     agent->metrics_array[LANE_ALIGNED_IDX] = 0.0f; // lane aligned
     agent->collision_state = 0;
     agent->collided_with_index = -1;
-    agent->collision_fault = FAULT_NONE;
-    agent->collision_normal_x = 0.0f;
-    agent->collision_normal_y = 0.0f;
+    // Do not clear the fault pair here. These are event-level values latched
+    // when a vehicle collision begins, not live classifications recomputed from
+    // post-collision velocities on every overlapping frame.
+    agent->collision_contact_x = 0.0f;
+    agent->collision_contact_y = 0.0f;
 }
 
 float point_to_segment_distance_2d(float px, float py, float x1, float y1, float x2, float y2) {
@@ -1490,19 +1693,27 @@ void compute_agent_metrics(Drive *env, int agent_idx) {
 
     // Check for vehicle collisions (skip for pedestrians)
     int car_collided_with_index = -1;
-    float collision_normal_x = 0.0f;
-    float collision_normal_y = 0.0f;
+    float collision_contact_x = 0.0f;
+    float collision_contact_y = 0.0f;
     car_collided_with_index =
-        collision_check_contact(env, agent_idx, &collision_normal_x, &collision_normal_y);
+        collision_check_contact(env, agent_idx, &collision_contact_x, &collision_contact_y);
     if (car_collided_with_index != -1) {
         collided = VEHICLE_COLLISION;
         agent->metrics_array[COLLISION_IDX] = 1.0f;
         agent->collided_with_index = car_collided_with_index;
-        agent->collision_normal_x = collision_normal_x;
-        agent->collision_normal_y = collision_normal_y;
-        agent->collision_fault =
-            classify_collision_fault(env, agent, &env->entities[car_collided_with_index], collision_normal_x,
-                                     collision_normal_y);
+        agent->collision_contact_x = collision_contact_x;
+        agent->collision_contact_y = collision_contact_y;
+        // Settle responsibility only on the rising edge of this collision
+        // event. collision_behavior may stop both participants after reward
+        // settlement; recomputing from those zero velocities on later frames
+        // would incorrectly turn both vehicles yellow in the debugger.
+        if (agent->prev_collision_state != VEHICLE_COLLISION) {
+            CollisionFaultPair pair =
+                classify_collision_pair(env, agent, &env->entities[car_collided_with_index], collision_contact_x,
+                                        collision_contact_y);
+            agent->collision_fault = pair.self_fault;
+            agent->other_collision_fault = pair.other_fault;
+        }
     }
 
     agent->collision_state = collided;
@@ -2350,6 +2561,7 @@ void c_reset(Drive *env) {
         env->entities[agent_idx].prev_collision_state = 0;
         env->entities[agent_idx].collided_with_index = -1;
         env->entities[agent_idx].collision_fault = FAULT_NONE;
+        env->entities[agent_idx].other_collision_fault = FAULT_NONE;
         env->entities[agent_idx].non_self_fault_rewarded = 0;
         env->entities[agent_idx].impact_vx = env->entities[agent_idx].vx;
         env->entities[agent_idx].impact_vy = env->entities[agent_idx].vy;
@@ -2373,6 +2585,14 @@ void c_reset(Drive *env) {
                 sample_open_interval(env->offroad_factor_min, env->offroad_factor_max);
             env->entities[agent_idx].lane_width =
                 sample_open_interval(env->lane_width_min, env->lane_width_max);
+        }
+
+        // The adversarial preference f (= non_self_fault_factor) applies to
+        // vehicles only. Pedestrians never register collisions (collision_check
+        // skips them) and have no offroad term, so a non-zero f would be
+        // degenerate for them. Force f = 0 so non-vehicles stay pure goal-seekers.
+        if (env->entities[agent_idx].type != VEHICLE) {
+            env->entities[agent_idx].non_self_fault_factor = 0.0f;
         }
 
         if (env->goal_behavior == GOAL_GENERATE_NEW) {
@@ -2403,6 +2623,7 @@ void respawn_agent(Drive *env, int agent_idx) {
     env->entities[agent_idx].prev_collision_state = 0;
     env->entities[agent_idx].collided_with_index = -1;
     env->entities[agent_idx].collision_fault = FAULT_NONE;
+    env->entities[agent_idx].other_collision_fault = FAULT_NONE;
     env->entities[agent_idx].non_self_fault_rewarded = 0;
     env->entities[agent_idx].impact_vx = env->entities[agent_idx].vx;
     env->entities[agent_idx].impact_vy = env->entities[agent_idx].vy;
@@ -2441,6 +2662,18 @@ void apply_collision_behavior(Drive *env, int agent_idx) {
     }
 }
 
+void snapshot_impact_velocities(Drive *env) {
+    // Objects occupy [0, num_objects); road geometry starts at num_objects.
+    // Snapshot every object together after static experts and active agents have
+    // moved, and before any collision detection or stop/remove behavior. This
+    // guarantees that pair attribution sees one coherent frame even when the
+    // counterparty is a static expert or has not reached its reward-loop turn.
+    for (int object_idx = 0; object_idx < env->num_objects; object_idx++) {
+        env->entities[object_idx].impact_vx = env->entities[object_idx].vx;
+        env->entities[object_idx].impact_vy = env->entities[object_idx].vy;
+    }
+}
+
 void c_step(Drive *env) {
     memset(env->rewards, 0, env->active_agent_count * sizeof(float));
     memset(env->terminals, 0, env->active_agent_count * sizeof(unsigned char));
@@ -2476,19 +2709,16 @@ void c_step(Drive *env) {
 
         // Small per-step time penalty: encourages reaching the goal sooner.
         // Skipped once the agent has reached its goal (removed/stopped) so it cleanly rewards early arrival.
+        // This is goal-seeking shaping, so it is scaled by the goal weight (1 - f)
+        // and vanishes for a purely adversarial agent (f = non_self_fault_factor = 1).
         if (env->reward_time_penalty > 0.0f && !env->entities[agent_idx].removed &&
             !env->entities[agent_idx].stopped) {
-            env->rewards[i] -= env->reward_time_penalty;
-            env->logs[i].episode_return -= env->reward_time_penalty;
+                env->rewards[i] -= env->reward_time_penalty;
+                env->logs[i].episode_return -= env->reward_time_penalty;
         }
     }
 
-    // Freeze the velocities used for responsibility attribution before any
-    // collision behavior can stop or remove an actor.
-    for (int actor_idx = 0; actor_idx < env->num_objects; actor_idx++) {
-        env->entities[actor_idx].impact_vx = env->entities[actor_idx].vx;
-        env->entities[actor_idx].impact_vy = env->entities[actor_idx].vy;
-    }
+    snapshot_impact_velocities(env);
 
     // Compute rewards
     for (int i = 0; i < env->active_agent_count; i++) {
@@ -2504,21 +2734,16 @@ void c_step(Drive *env) {
             int prev_collision_state = env->entities[agent_idx].prev_collision_state;
             if (collision_state == VEHICLE_COLLISION) {
                 int collision_fault = env->entities[agent_idx].collision_fault;
+                int other_collision_fault = env->entities[agent_idx].other_collision_fault;
                 if (prev_collision_state != VEHICLE_COLLISION) {
                     float collision_reward = 0.0f;
                     if (env->collision_reward_mode == COLLISION_REWARD_LEGACY) {
                         collision_reward = -env->entities[agent_idx].self_fault_factor;
-                    } else if (collision_fault == SELF_FAULT) {
-                        collision_reward = -env->entities[agent_idx].self_fault_factor;
-                    } else if (collision_fault == NON_SELF_FAULT &&
-                               (!env->non_self_fault_reward_once ||
-                                !env->entities[agent_idx].non_self_fault_rewarded)) {
-                        collision_reward = env->entities[agent_idx].non_self_fault_factor;
-                        env->entities[agent_idx].non_self_fault_rewarded = 1;
-                    }
-                    else {
-                        // ambiguous collisions are treated as self-fault for reward purposes
-                        collision_reward = -env->entities[agent_idx].self_fault_factor;
+                    } else {
+                        collision_reward =
+                            settle_adversarial_collision_reward(&env->entities[agent_idx], collision_fault,
+                                                               other_collision_fault,
+                                                               env->non_self_fault_reward_once);
                     }
                     env->rewards[i] += collision_reward;
                     env->logs[i].episode_return += collision_reward;
@@ -2528,7 +2753,7 @@ void c_step(Drive *env) {
                     else if (collision_fault == NON_SELF_FAULT)
                         env->logs[i].non_self_fault_collisions_per_agent += 1.0f;
                     else
-                        env->logs[i].ambiguous_collisions_per_agent += 1.0f;
+                        env->logs[i].ambiguous_collisions_per_agent += 0.0f; // TODO: correct?
                 }
                 env->logs[i].collision_rate = 1.0f;
                 if (collision_fault == SELF_FAULT)
@@ -2536,7 +2761,7 @@ void c_step(Drive *env) {
                 else if (collision_fault == NON_SELF_FAULT)
                     env->logs[i].non_self_fault_collision_rate = 1.0f;
                 else
-                    env->logs[i].ambiguous_collision_rate = 1.0f;
+                    env->logs[i].ambiguous_collision_rate = 0.0f; // TODO: correct?
             } else if (collision_state == OFFROAD) {
                 if (prev_collision_state != OFFROAD) {
                     float offroad_reward = -env->entities[agent_idx].offroad_factor;
@@ -2566,6 +2791,18 @@ void c_step(Drive *env) {
             goal_reward -= env->overspeed_penalty;
             post_respawn_goal_reward -= env->overspeed_penalty;
         }
+
+        // Blend the goal objective against the adversarial objective using
+        // f = non_self_fault_factor in [0, 1]:
+        //   (1 - f) * goal + f * exclusive_counterparty_self_fault.
+        // The positive collision reward already equals f, so only the goal side
+        // is scaled here. self-fault and offroad penalties stay unscaled.
+        // f is 0 for pedestrians/cyclists (see reset), so they keep the full goal.
+        float goal_weight = 1.0f - env->entities[agent_idx].non_self_fault_factor;
+        if (goal_weight < 0.0f)
+            goal_weight = 0.0f;
+        goal_reward *= goal_weight;
+        post_respawn_goal_reward *= goal_weight;
 
         if (within_distance && !env->entities[agent_idx].current_goal_reached) {
             if (env->goal_behavior == GOAL_RESPAWN && env->entities[agent_idx].respawn_timestep != -1) {
@@ -3251,8 +3488,18 @@ void draw_scene(Drive *env, Client *client, int mode, int obs_only, int lasers, 
                     else
                         agent_color = BLUE;
                 }
-                if (is_active_agent && env->entities[i].collision_state > 0)
-                    agent_color = RED;
+                if (is_active_agent && env->entities[i].collision_state > 0) {
+                    // BEV: collisions where the counterparty is SELF_FAULT and
+                    // ego is not are yellow; ego-fault, ambiguous collisions and
+                    // offroad stay red. The fault pair is latched at the reward
+                    // edge, so the color remains stable after collision stop.
+                    if (env->entities[i].collision_state == VEHICLE_COLLISION &&
+                        env->entities[i].collision_fault != SELF_FAULT &&
+                        env->entities[i].other_collision_fault == SELF_FAULT)
+                        agent_color = NON_SELF_FAULT_YELLOW;
+                    else
+                        agent_color = RED;
+                }
 
                 rlPushMatrix();
                 rlTranslatef(position.x, position.y, position.z);
@@ -3450,6 +3697,40 @@ void draw_scene(Drive *env, Client *client, int mode, int obs_only, int lasers, 
                 snprintf(text, sizeof(text), "%d", womd_track_idx);
                 int text_width = MeasureText(text, 20);
                 DrawText(text, screen_x - text_width / 2, screen_y, 20, PUFF_WHITE);
+            }
+        }
+    }
+
+    // Draw the adversarial factor f (= non_self_fault_factor) as a text label on
+    // the edge of each active agent's bounding box. Only valid for the top-down
+    // orthographic sim-state view (mode == 1, obs_only == 0), whose camera is
+    // centered at the world origin, so the same manual world-to-screen projection
+    // as the WOSAC track indices applies.
+    if (mode == 1 && obs_only == 0) {
+        float map_height = env->grid_map->top_left_y - env->grid_map->bottom_right_y;
+        float pixels_per_world_unit = client->height / map_height;
+
+        for (int i = 0; i < env->active_agent_count; i++) {
+            int agent_idx = env->active_agent_indices[i];
+            Entity *agent = &env->entities[agent_idx];
+            if (agent->valid == 0 || agent->removed || agent->respawn_timestep != -1) {
+                continue;
+            }
+
+            float raw_x = -agent->x * pixels_per_world_unit;
+            float raw_y = agent->y * pixels_per_world_unit;
+            int screen_x = (int)raw_x + client->width / 2;
+            int screen_y = (int)raw_y + client->height / 2;
+
+            // Offset the label just above the top edge of the bounding box.
+            int half_box_px = (int)(agent->length * 0.5f * pixels_per_world_unit);
+            int label_y = screen_y - half_box_px - 16;
+
+            if (screen_x >= 0 && screen_x <= client->width && label_y >= 0 && label_y <= client->height) {
+                char text[16];
+                snprintf(text, sizeof(text), "f=%.2f", agent->non_self_fault_factor);
+                int text_width = MeasureText(text, 14);
+                DrawText(text, screen_x - text_width / 2, label_y, 14, PUFF_WHITE);
             }
         }
     }

@@ -3,33 +3,158 @@
 #define Env Drive
 #define MY_SHARED
 #define MY_PUT
+static PyObject *py_obb_contact_point(PyObject *self, PyObject *args);
 static PyObject *py_classify_collision_fault(PyObject *self, PyObject *args);
+static PyObject *py_classify_collision_pair(PyObject *self, PyObject *args);
+static PyObject *py_settle_adversarial_collision_reward(PyObject *self, PyObject *args);
+static PyObject *py_expert_impact_snapshot(PyObject *self, PyObject *args);
 #define MY_METHODS                                                                                                     \
+    {"obb_contact_point", py_obb_contact_point, METH_VARARGS,                                                          \
+     "Overlap centroid of two synthetic oriented bounding boxes"},                                                     \
     {"classify_collision_fault", py_classify_collision_fault, METH_VARARGS,                                            \
-     "Classify a synthetic contact for validation and diagnostics"}
+     "Classify a synthetic contact for validation and diagnostics"},                                                   \
+    {"classify_collision_pair", py_classify_collision_pair, METH_VARARGS,                                              \
+     "Classify both participants from one synthetic pre-impact snapshot"},                                            \
+    {"settle_adversarial_collision_reward", py_settle_adversarial_collision_reward, METH_VARARGS,                     \
+     "Settle a synthetic adversarial collision event"},                                                               \
+    {"expert_impact_snapshot", py_expert_impact_snapshot, METH_VARARGS,                                                \
+     "Move a synthetic expert and return its live and snapshotted velocity"}
 #include "../env_binding.h"
 
-static PyObject *py_classify_collision_fault(PyObject *self, PyObject *args) {
-    double agent_speed, other_speed, normal_x, normal_y;
-    double agent_heading, other_heading, speed_threshold, front_cos_threshold;
-    if (!PyArg_ParseTuple(args, "dddddddd", &agent_speed, &other_speed, &normal_x, &normal_y, &agent_heading,
-                          &other_heading, &speed_threshold, &front_cos_threshold))
+// Fault attribution is geometric, so the harness describes each participant by
+// its full pose and box, not just a velocity vector: (x, y, heading, length,
+// width, vx, vy). The contact point is then derived by the same code the env
+// runs, rather than being supplied by the test.
+static int unpack_entity(PyObject *obj, Entity *entity) {
+    double x, y, heading, length, width, vx, vy;
+    if (!PyTuple_Check(obj)) {
+        PyErr_SetString(PyExc_TypeError, "expected a tuple (x, y, heading, length, width, vx, vy)");
+        return 0;
+    }
+    if (!PyArg_ParseTuple(obj, "ddddddd", &x, &y, &heading, &length, &width, &vx, &vy))
+        return 0;
+
+    entity->x = (float)x;
+    entity->y = (float)y;
+    entity->heading = (float)heading;
+    entity->heading_x = cosf((float)heading);
+    entity->heading_y = sinf((float)heading);
+    entity->length = (float)length;
+    entity->width = (float)width;
+    entity->vx = (float)vx;
+    entity->vy = (float)vy;
+    entity->impact_vx = (float)vx;
+    entity->impact_vy = (float)vy;
+    return 1;
+}
+
+static int unpack_synthetic_contact(PyObject *args, Drive *env, Entity *agent, Entity *other, float *contact_x,
+                                    float *contact_y) {
+    PyObject *agent_obj;
+    PyObject *other_obj;
+    double speed_threshold, front_cos_threshold;
+    if (!PyArg_ParseTuple(args, "OOdd", &agent_obj, &other_obj, &speed_threshold, &front_cos_threshold))
+        return 0;
+    if (!unpack_entity(agent_obj, agent) || !unpack_entity(other_obj, other))
+        return 0;
+
+    env->fault_speed_threshold = (float)speed_threshold;
+    env->front_contact_cos_threshold = (float)front_cos_threshold;
+    obb_contact_point(agent, other, contact_x, contact_y);
+    return 1;
+}
+
+static PyObject *py_obb_contact_point(PyObject *self, PyObject *args) {
+    PyObject *agent_obj;
+    PyObject *other_obj;
+    Entity agent = {0};
+    Entity other = {0};
+    if (!PyArg_ParseTuple(args, "OO", &agent_obj, &other_obj))
+        return NULL;
+    if (!unpack_entity(agent_obj, &agent) || !unpack_entity(other_obj, &other))
         return NULL;
 
+    float contact_x = 0.0f;
+    float contact_y = 0.0f;
+    int overlapped = obb_contact_point(&agent, &other, &contact_x, &contact_y);
+    return Py_BuildValue("(iff)", overlapped, contact_x, contact_y);
+}
+
+static PyObject *py_classify_collision_fault(PyObject *self, PyObject *args) {
     Drive env = {0};
     Entity agent = {0};
     Entity other = {0};
-    env.fault_speed_threshold = (float)speed_threshold;
-    env.front_contact_cos_threshold = (float)front_cos_threshold;
-    agent.heading_x = cosf((float)agent_heading);
-    agent.heading_y = sinf((float)agent_heading);
-    other.heading_x = cosf((float)other_heading);
-    other.heading_y = sinf((float)other_heading);
-    agent.impact_vx = (float)agent_speed;
-    other.impact_vx = (float)other_speed;
+    float contact_x, contact_y;
+    if (!unpack_synthetic_contact(args, &env, &agent, &other, &contact_x, &contact_y))
+        return NULL;
 
-    int fault = classify_collision_fault(&env, &agent, &other, (float)normal_x, (float)normal_y);
+    int fault = classify_collision_fault(&env, &agent, &other, contact_x, contact_y);
     return PyLong_FromLong(fault);
+}
+
+static PyObject *py_classify_collision_pair(PyObject *self, PyObject *args) {
+    Drive env = {0};
+    Entity agent = {0};
+    Entity other = {0};
+    float contact_x, contact_y;
+    if (!unpack_synthetic_contact(args, &env, &agent, &other, &contact_x, &contact_y))
+        return NULL;
+
+    CollisionFaultPair pair = classify_collision_pair(&env, &agent, &other, contact_x, contact_y);
+    return Py_BuildValue("(ii)", pair.self_fault, pair.other_fault);
+}
+
+static PyObject *py_settle_adversarial_collision_reward(PyObject *self, PyObject *args) {
+    int self_fault, other_fault, stopped, already_rewarded, reward_once;
+    double self_fault_factor, non_self_fault_factor;
+    if (!PyArg_ParseTuple(args, "iiiiidd", &self_fault, &other_fault, &stopped, &already_rewarded, &reward_once,
+                          &self_fault_factor, &non_self_fault_factor))
+        return NULL;
+
+    Entity agent = {
+        .stopped = stopped,
+        .non_self_fault_rewarded = already_rewarded,
+        .self_fault_factor = (float)self_fault_factor,
+        .non_self_fault_factor = (float)non_self_fault_factor,
+    };
+    float reward = settle_adversarial_collision_reward(&agent, self_fault, other_fault, reward_once);
+    return Py_BuildValue("(fi)", reward, agent.non_self_fault_rewarded);
+}
+
+static PyObject *py_expert_impact_snapshot(PyObject *self, PyObject *args) {
+    double trajectory_vx, trajectory_vy;
+    if (!PyArg_ParseTuple(args, "dd", &trajectory_vx, &trajectory_vy))
+        return NULL;
+
+    float traj_x[1] = {0.0f};
+    float traj_y[1] = {0.0f};
+    float traj_z[1] = {0.0f};
+    float traj_vx[1] = {(float)trajectory_vx};
+    float traj_vy[1] = {(float)trajectory_vy};
+    float traj_vz[1] = {0.0f};
+    float traj_heading[1] = {0.0f};
+    int traj_valid[1] = {1};
+    Entity expert = {
+        .type = VEHICLE,
+        .array_size = 1,
+        .traj_x = traj_x,
+        .traj_y = traj_y,
+        .traj_z = traj_z,
+        .traj_vx = traj_vx,
+        .traj_vy = traj_vy,
+        .traj_vz = traj_vz,
+        .traj_heading = traj_heading,
+        .traj_valid = traj_valid,
+    };
+    Drive env = {
+        .entities = &expert,
+        .num_objects = 1,
+        .timestep = 0,
+    };
+
+    move_expert(&env, NULL, 0);
+    snapshot_impact_velocities(&env);
+    return Py_BuildValue("(ffff)", expert.vx, expert.vy, expert.impact_vx, expert.impact_vy);
 }
 
 static int my_put(Env *env, PyObject *args, PyObject *kwargs) {
