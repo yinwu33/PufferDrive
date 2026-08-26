@@ -66,17 +66,17 @@ RENDER_FPS = 10
 PARTNER_FEATURES = 7
 ROAD_FEATURES = 7
 
-# Per-policy specs. "pufferdrive" and "selfplay_drive" are *different* models with
+# Per-policy specs. "pufferdrive" and "cond_drive" are *different* models with
 # different observation layouts, so each carries its own config, checkpoint and
 # obs geometry (these mirror the C constants in the respective drive.h):
 #   - pufferdrive   : ocean puffer_drive, classic ego = 8 base features (no
 #                     conditioning), MAX_AGENTS=32, 128 road segments, 50m range.
-#   - selfplay_drive: pacific selfplay_drive, classic ego = 8 base + 3 conditioning
-#                     features (collision_factor, offroad_factor, lane_width),
-#                     MAX_AGENTS=64, 512 road segments, 64m range (full 64x64 map).
+#   - cond_drive: pacific cond_drive, classic ego = 8 base + 3 conditioning
+#                 features (collision_factor, offroad_factor, lane_width),
+#                 MAX_AGENTS=64, 512 road segments, 64m range (full 64x64 map).
 POLICY_SPECS: dict[str, dict[str, Any]] = {
     "pufferdrive": {
-        "config_path": REPO_ROOT / "config" / "ocean" / "drive.ini",
+        "config_path": REPO_ROOT / "pufferlib" / "config" / "ocean" / "drive.ini",
         "default_model": REPO_ROOT / "experiments" / "puffer_drive.pt",
         "model_glob": "*puffer_drive*.pt",
         "ego_features": 8,
@@ -85,15 +85,10 @@ POLICY_SPECS: dict[str, dict[str, Any]] = {
         "max_road_objects": 128,
         "obs_range_sq": 2500.0,  # 50m
     },
-    "selfplay_drive": {
-        "config_path": REPO_ROOT / "config" / "pacific" / "selfplay_drive.ini",
-        "default_model": (
-            REPO_ROOT
-            / "experiments"
-            / "selfplay_drive_178125169286"
-            / "model_selfplay_drive_001000.pt"
-        ),
-        "model_glob": "*selfplay_drive*.pt",
+    "cond_drive": {
+        "config_path": REPO_ROOT / "pufferlib" / "config" / "pacific" / "cond_drive.ini",
+        "default_model": REPO_ROOT / "experiments" / "cond_drive.pt",
+        "model_glob": "*cond_drive*.pt",
         "ego_features": 11,
         "has_conditioning": True,
         "max_partner_objects": 63,
@@ -108,12 +103,12 @@ MAX_VEH_LEN = 30.0
 MAX_ROAD_SEGMENT_LENGTH = 100.0
 MAX_ROAD_SCALE = 100.0
 TIME_INTERVAL = 0.1
-# Conditioning inputs for the selfplay_drive model. These scale the collision /
+# Conditioning inputs for the cond_drive model. These scale the collision /
 # offroad penalties the policy was trained against; higher = more cautious. The
 # values are fed into the ego observation raw (un-normalized), matching drive.h.
 DEFAULT_COLLISION_FACTOR = 2.0
 DEFAULT_OFFROAD_FACTOR = 2.0
-DEFAULT_LANE_WIDTH = 3.5
+DEFAULT_LANE_WIDTH = 4.0
 ACCELERATION_VALUES = (-4.0, -2.667, -1.333, 0.0, 1.333, 2.667, 4.0)
 STEERING_VALUES = (
     -1.0,
@@ -204,7 +199,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--bin",
         type=Path,
         default=None,
-        help="Run Waymax on a PufferDrive .bin map (selfplay_drive training format).",
+        help="Run Waymax on a PufferDrive .bin map (cond_drive training format).",
     )
     parser.add_argument(
         "-f",
@@ -222,9 +217,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--policy",
-        choices=("expert", "constant_speed", "zero", "pufferdrive", "selfplay_drive"),
+        choices=("expert", "constant_speed", "zero", "pufferdrive", "cond_drive"),
         default="pufferdrive",
-        help="SDC controller. 'pufferdrive' (ocean) and 'selfplay_drive' (pacific) "
+        help="SDC controller. 'pufferdrive' (ocean) and 'cond_drive' (pacific) "
         "are different models with different observation layouts.",
     )
     parser.add_argument(
@@ -243,21 +238,21 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--collision-factor",
         type=float,
         default=DEFAULT_COLLISION_FACTOR,
-        help="selfplay_drive conditioning input: collision penalty scale "
+        help="cond_drive conditioning input: collision penalty scale "
         "(higher = more cautious). Fed into the ego observation.",
     )
     parser.add_argument(
         "--offroad-factor",
         type=float,
         default=DEFAULT_OFFROAD_FACTOR,
-        help="selfplay_drive conditioning input: offroad penalty scale "
+        help="cond_drive conditioning input: offroad penalty scale "
         "(higher = more cautious). Fed into the ego observation.",
     )
     parser.add_argument(
         "--lane-width",
         type=float,
         default=DEFAULT_LANE_WIDTH,
-        help="selfplay_drive conditioning input: lane width (m, 1.0-5.0) used as "
+        help="cond_drive conditioning input: lane width (m, 1.0-5.0) used as "
         "the offroad half-width tolerance. Fed into the ego observation.",
     )
     parser.add_argument(
@@ -704,7 +699,7 @@ def pufferdrive_observation_from_waymax(
     object_types = np.asarray(state.object_metadata.object_types)
     obs[0, 7] = float(object_types[ego_idx]) / 3.0
     if spec["has_conditioning"]:
-        # selfplay_drive conditioning inputs (raw, un-normalized; see drive.h)
+        # cond_drive conditioning inputs (raw, un-normalized; see drive.h)
         # Trailing 3 ego features: collision_factor, offroad_factor, lane_width
         obs[0, ego_features - 3] = collision_factor
         obs[0, ego_features - 2] = offroad_factor

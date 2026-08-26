@@ -6,10 +6,10 @@ python setup.py build_ext --inplace --force
 
 ## Training
 
-### training bad_driver in pacific
+### training cond_drive in pacific
 
 ```bash
-puffer train bad_driver
+puffer train cond_drive
 ```
 
 ### how to use carla for testing

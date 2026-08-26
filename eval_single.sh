@@ -5,7 +5,7 @@ usage() {
     echo "Usage: $0 <env_name> <bin_path> [puffer eval args...]"
     echo
     echo "Example:"
-    echo "  $0 bad_driver resources/drive/binaries/selfplay_train/map_123.bin --load-model-path ./experiments/bad_driver_178126787233.pt"
+    echo "  $0 cond_drive resources/drive/binaries/training/map_123.bin --load-model-path ./experiments/cond_drive_RUN_ID.pt"
 }
 
 if [[ $# -lt 2 ]]; then

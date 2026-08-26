@@ -51,7 +51,7 @@ def evaluate_trajectories(simulated_trajectory_file, args):
     """
     Evaluates pre-computed simulated trajectories against live ground truth from the environment.
     """
-    env_name = "bad_driver"
+    env_name = "cond_drive"
     args["env"]["map_dir"] = args["eval"]["map_dir"]
     args["env"]["num_maps"] = args["eval"]["wosac_num_maps"]
     dataset_name = args["env"]["map_dir"].split("/")[-1]
@@ -138,6 +138,6 @@ if __name__ == "__main__":
         print("ERROR: --simulated-file argument is required.")
         sys.exit(1)
 
-    config = pufferl.load_config("bad_driver")
+    config = pufferl.load_config("cond_drive")
 
     evaluate_trajectories(simulated_file, args=config)

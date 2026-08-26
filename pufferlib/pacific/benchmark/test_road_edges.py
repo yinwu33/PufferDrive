@@ -11,7 +11,7 @@ from pufferlib.pufferl import load_config
 
 
 def main():
-    env_name = "bad_driver"
+    env_name = "cond_drive"
     args = load_config(env_name)
 
     args["vec"] = dict(backend="PufferEnv", num_envs=1)

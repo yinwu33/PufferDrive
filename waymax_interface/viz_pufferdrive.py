@@ -14,7 +14,7 @@ from matplotlib.patches import Circle, Polygon, Rectangle
 import numpy as np
 
 
-# Default obs layout = selfplay_drive (pacific): classic ego = 8 base + 3
+# Default obs layout = cond_drive (pacific): classic ego = 8 base + 3
 # conditioning features (collision_factor, offroad_factor, lane_width); used here
 # only as the partner/road offset. Overridden per-policy via VizPufferDrive.set_layout().
 EGO_FEATURES_CLASSIC = 11
@@ -63,7 +63,7 @@ class VizPufferDrive:
         self.fps = fps
         self.dpi = dpi
         # Observation layout used to slice the obs vector. Defaults to the
-        # selfplay_drive (pacific) layout; call set_layout() to switch policies.
+        # cond_drive (pacific) layout; call set_layout() to switch policies.
         self.ego_features = EGO_FEATURES_CLASSIC
         self.max_partner_objects = MAX_PARTNER_OBJECTS
         self.max_road_objects = MAX_ROAD_OBJECTS

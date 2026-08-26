@@ -41,7 +41,7 @@ int demo(const char *map_name, const char *policy_name, int show_grid, int obs_o
     // Parse configuration from INI file
     env_init_config conf = {0};
     conf.centerline_only = 1; // Default: only centerline (ROAD_LANE) in grid map / observation
-    const char *ini_file = "pufferlib/config/pacific/bad_driver.ini";
+    const char *ini_file = "pufferlib/config/pacific/cond_drive.ini";
     if (ini_parse(ini_file, handler, &conf) < 0) {
         fprintf(stderr, "Error: Could not load %s. Cannot determine environment configuration.\n", ini_file);
         return -1;

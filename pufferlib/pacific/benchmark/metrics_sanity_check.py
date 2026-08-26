@@ -80,8 +80,8 @@ def format_results_table(results):
 
 def main():
     parser = argparse.ArgumentParser(description="Validate WOSAC log-likelihood metrics")
-    parser.add_argument("--env", default="bad_driver")
-    parser.add_argument("--config", default="config/pacific/bad_driver.ini")
+    parser.add_argument("--env", default="cond_drive")
+    parser.add_argument("--config", default="pufferlib/config/pacific/cond_drive.ini")
     args = parser.parse_args()
 
     config = load_config(args.env)

@@ -87,7 +87,7 @@ def plot_agent_trajectories(ax, traj, agent_mask, rollout_idx, collisions, offro
 
 def main():
     parser = argparse.ArgumentParser(description="Visual validation of collision/offroad detection")
-    parser.add_argument("--env", default="bad_driver")
+    parser.add_argument("--env", default="cond_drive")
     parser.add_argument("--output", default="visual_sanity_check.png")
     args = parser.parse_args()
 
